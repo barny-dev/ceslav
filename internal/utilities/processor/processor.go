@@ -38,6 +38,9 @@ func Run(ctx context.Context, input *csv.Reader, hasHeader bool, proc Processor)
 			return context.Cause(ctx)
 		}
 		values, err := input.Read()
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
 		if errors.Is(err, io.EOF) {
 			if hasHeader && record == 1 {
 				return errors.New("input: header expected, but input is empty")

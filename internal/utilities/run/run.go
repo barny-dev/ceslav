@@ -1,6 +1,7 @@
 package run
 
 import (
+	"context"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -31,7 +32,7 @@ func RunOneToOneCommand(cmd *cobra.Command, initialize processor.Initializer) (o
 	}
 	sink := func(record []string) error {
 		if err := cmd.Context().Err(); err != nil {
-			return err
+			return context.Cause(cmd.Context())
 		}
 		if err := openOutput(); err != nil {
 			return err

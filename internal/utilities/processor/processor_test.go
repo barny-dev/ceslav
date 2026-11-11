@@ -122,3 +122,29 @@ func TestCancellationPreservesCause(t *testing.T) {
 		})
 	}
 }
+
+type cancelingReader struct {
+	reader io.Reader
+	cancel func()
+}
+
+func (r cancelingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.cancel()
+	return n, err
+}
+
+func TestCancellationDuringReadSkipsProcessing(t *testing.T) {
+	cause := errors.New("canceled during read")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	reader := cancelingReader{strings.NewReader("one\n"), func() { cancel(cause) }}
+	proc := &probeProcessor{}
+	err := Run(ctx, csv.NewReader(reader), false, proc)
+	if !errors.Is(err, cause) {
+		t.Fatalf("lost cancellation cause: %v", err)
+	}
+	if proc.rows != 0 || proc.completed != 0 {
+		t.Fatal("processed or completed after cancellation during read")
+	}
+}
