@@ -1,53 +1,56 @@
-# ceslav implementation progress
+# Implementation goals
 
-Based on the functionality assessment dated 11 November 2026, baseline commit `d663537346ee3a0de4fd69da263bb15157edf7a1`.
+| Goal | Status |
+| --- | --- |
+| 1. Reliable CSV processing, validation and tests | Complete |
+| 2. Column projection and row selection | Planned |
+| 3. Typed values and temporal conversions | Planned |
+| 4. Row expressions, derived columns and filtering | Planned |
+| 5. Expression sorting and stable ties | Planned |
 
-Status distinguishes implementation, verification and merge. A completed implementation on a branch does not imply it has been merged.
+## 1. Reliable CSV processing, validation and tests
 
-| Step | Scope | Status |
-| --- | --- | --- |
-| 1 | Repair the foundation and make validation repeatable | Implemented and verified; PR #1 open, review/merge pending |
-| 2 | Column projection and first/last row operations | Not started |
-| 3 | Typed values and date/time conversions | Not started |
-| 4 | Shared expressions, derived columns and filtering | Not started |
-| 5 | Typed expression keys and stable sorting | Not started |
+- [x] Return input, processing and output errors to the CLI.
+- [x] Stop processing on errors and complete exactly once on EOF or deliberate early stop.
+- [x] Interrupt blocked input reads on cancellation and preserve the cancellation cause.
+- [x] Finish cancellation cleanup before returning.
+- [x] Open output files with correct write access and permissions; report write, flush and close errors.
+- [x] Delay output creation and reject input/output file aliases before truncation.
+- [x] Share column-name/index resolution and validate missing, ambiguous and out-of-range references.
+- [x] Require sort keys and validate numeric values, including singleton inputs.
+- [x] Build integration-test executables automatically and cover processing regressions.
+- [x] Maintain build, vet and race-test CI coverage across Linux, macOS and Windows.
+- [x] Document the implemented commands and their input/output semantics.
 
-## Step 1 checklist
+## 2. Column projection and row selection
 
-- [x] Replace cancellation-driven success with a synchronous runner returning real errors.
-- [x] Stop immediately after initialization, header, row and input errors.
-- [x] Complete exactly once at EOF or a deliberate stop; skip completion after errors/cancellation.
-- [x] Correct file write access and permissions; report write/flush/close failures.
-- [x] Delay output opening; reject input/output aliases before truncating.
-- [x] Extract shared name/index resolution; reject missing, ambiguous and out-of-range columns.
-- [x] Require sort keys; validate numeric values before heap insertion, including singleton input.
-- [x] Make integration tests build a temporary executable and avoid pipe deadlocks.
-- [x] Add regression and lifecycle tests.
-- [x] Refresh README and CLI help.
-- [x] Add CI for Go 1.22.7 on Linux/Windows and stable Go on Linux/macOS.
-- [x] Verify the hosted CI jobs: [successful run](https://github.com/barny-dev/ceslav/actions/runs/43090324317).
-- [x] Complete local review and record validation results.
-- [x] Open the implementation pull request: [#1](https://github.com/barny-dev/ceslav/pull/1).
-- [ ] Merge after review.
+- [ ] Select columns in an explicit order, covering selection and reordering.
+- [ ] Drop columns while retaining the original order of the remainder.
+- [ ] Apply column projection to headers consistently.
+- [ ] Keep or drop the first N data records using constant auxiliary row storage.
+- [ ] Keep or drop the last N data records using a buffer bounded by N.
+- [ ] Define zero, oversized and invalid counts; exclude headers from row counts.
 
-## Execution log
+## 3. Typed values and temporal conversions
 
-### 2026-11-11 — Step 1 implementation
+- [ ] Support string, number, Boolean, date, time-of-day and datetime values.
+- [ ] Preserve raw CSV cells and convert only fields used by an operation.
+- [ ] Provide explicit default/custom temporal parsing and formatting.
+- [ ] Define timezone, comparison, precision and serialization behavior.
+- [ ] Validate dates, leap days, fractional seconds and equivalent instants with different offsets.
 
-Replaced the three-goroutine CSV pipeline with one record-processing loop. Output opens lazily after processor validation; file identities are compared before truncation. Sorting now uses a shared column resolver and validates every numeric key before insertion. The test harness builds its executable in a temporary directory.
+## 4. Row expressions, derived columns and filtering
 
-Local checks passed on Go 1.22.7 / Linux: `go test ./...`, `go test -race -count=1 ./...`, `go vet ./...`, and `git diff --check`. Regression coverage includes all 10 pre-existing cases, arbitrary/ambiguous named columns, singleton invalid values/indices, malformed and multiline CSV, file permissions and output errors, same-file aliases, and destination preservation on invalid input. Unit tests cover graceful early stop, completion counts, cancellation causes (including cancellation during a read), and combined flush/close failures. Hosted Linux (minimum/stable Go) and Windows (minimum Go) checks passed. The initial macOS 26 / Go 1.22.7 job failed before tests ran because dyld rejected the old linker output (`missing LC_UUID`). macOS now uses stable Go. The final implementation commit `e18349fb62d41d8c55df920f38ee8ab7c8d602ad` passed all four jobs in [CI run 43090324317](https://github.com/barny-dev/ceslav/actions/runs/43090324317). Pull request review and merge are pending. Push CI is limited to `master` to avoid duplicating pull-request jobs.
+- [ ] Compile row expressions once and resolve column references through the shared resolver.
+- [ ] Support basic numeric, string, logical and temporal functions.
+- [ ] Add columns from expressions, with consistent headers and defined collision behavior.
+- [ ] Filter records using Boolean expressions and short-circuit logic.
+- [ ] Report conversion/type errors with record, column and expression context.
 
-## Remaining scope
+## 5. Expression sorting and stable ties
 
-Step 2 adds `select`, `drop` and `rows` (keep/drop first/last N), reusing the resolver and early-stop lifecycle.
-
-Step 3 introduces explicit numeric, string, Boolean, date, time-of-day and datetime values, while keeping CSV cells as strings at the I/O boundary.
-
-Step 4 shares a compiled scalar expression evaluator between `derive` and `filter`.
-
-Step 5 reuses that evaluator for temporal/expression sort keys, caches keys per row, and makes equal keys stable. The existing heap and repeated comparison-time numeric parsing remain until that step.
-
-### 2026-11-11 — Verification complete
-
-All four hosted jobs passed: Go 1.22.7 on Linux and Windows, stable Go on Linux and macOS. Each job builds, runs vet, and runs the test suite with the race detector. Local source and the published implementation commit were compared before finalizing this log. This final tracking update changes documentation only. Step 1 is ready for review in [PR #1](https://github.com/barny-dev/ceslav/pull/1); steps 2–5 remain unstarted.
+- [ ] Add ascending/descending expression keys, including dates, times and datetimes.
+- [ ] Preserve key priority and the existing sort-key shorthand.
+- [ ] Evaluate and cache typed keys once per record.
+- [ ] Preserve input order for equal keys.
+- [ ] Share conversion and comparison semantics with derived columns and filtering.

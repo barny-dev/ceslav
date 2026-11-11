@@ -2,11 +2,12 @@ package processor
 
 import (
 	"context"
-	"encoding/csv"
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 type probeProcessor struct {
@@ -14,6 +15,7 @@ type probeProcessor struct {
 	stopHeader, stopRow            bool
 	headerErr, rowErr, completeErr error
 	afterRow                       func()
+	afterComplete                  func()
 }
 
 func (p *probeProcessor) ProcessHeader([]string) (bool, error) {
@@ -27,7 +29,13 @@ func (p *probeProcessor) ProcessRow([]string) (bool, error) {
 	}
 	return p.stopRow, p.rowErr
 }
-func (p *probeProcessor) Complete() error { p.completed++; return p.completeErr }
+func (p *probeProcessor) Complete() error {
+	p.completed++
+	if p.afterComplete != nil {
+		p.afterComplete()
+	}
+	return p.completeErr
+}
 
 type failingReader struct {
 	called bool
@@ -59,7 +67,7 @@ func TestRunLifecycle(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			proc := tc.proc
-			err := Run(context.Background(), csv.NewReader(strings.NewReader(tc.input)), tc.header, &proc)
+			err := Run(context.Background(), io.NopCloser(strings.NewReader(tc.input)), tc.header, &proc)
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("error: %v, want %v", err, tc.wantErr)
 			}
@@ -72,7 +80,7 @@ func TestRunLifecycle(t *testing.T) {
 
 func TestEarlyStopDoesNotReadAgain(t *testing.T) {
 	blocked := &failingReader{cause: errors.New("must not read beyond selected row")}
-	input := csv.NewReader(io.MultiReader(strings.NewReader("one\n"), blocked))
+	input := io.NopCloser(io.MultiReader(strings.NewReader("one\n"), blocked))
 	proc := &probeProcessor{stopRow: true}
 	if err := Run(context.Background(), input, false, proc); err != nil {
 		t.Fatal(err)
@@ -87,7 +95,7 @@ func TestEarlyStopDoesNotReadAgain(t *testing.T) {
 
 func TestInputErrorSkipsCompletion(t *testing.T) {
 	failure := errors.New("read failed")
-	input := csv.NewReader(&failingReader{cause: failure})
+	input := io.NopCloser(&failingReader{cause: failure})
 	proc := &probeProcessor{}
 	if err := Run(context.Background(), input, false, proc); !errors.Is(err, failure) {
 		t.Fatalf("error: %v", err)
@@ -109,7 +117,7 @@ func TestCancellationPreservesCause(t *testing.T) {
 			} else {
 				proc.afterRow = func() { cancel(failure) }
 			}
-			err := Run(ctx, csv.NewReader(strings.NewReader("one\ntwo\n")), false, proc)
+			err := Run(ctx, io.NopCloser(strings.NewReader("one\ntwo\n")), false, proc)
 			if !errors.Is(err, failure) {
 				t.Fatalf("error: %v", err)
 			}
@@ -140,11 +148,160 @@ func TestCancellationDuringReadSkipsProcessing(t *testing.T) {
 	defer cancel(nil)
 	reader := cancelingReader{strings.NewReader("one\n"), func() { cancel(cause) }}
 	proc := &probeProcessor{}
-	err := Run(ctx, csv.NewReader(reader), false, proc)
+	err := Run(ctx, io.NopCloser(reader), false, proc)
 	if !errors.Is(err, cause) {
 		t.Fatalf("lost cancellation cause: %v", err)
 	}
 	if proc.rows != 0 || proc.completed != 0 {
 		t.Fatal("processed or completed after cancellation during read")
+	}
+}
+
+// Signal when Run has entered the underlying read, rather than relying on
+// sleeps or a reader that returns immediately after cancellation.
+type signaledInput struct {
+	io.ReadCloser
+	entered chan struct{}
+	signal  sync.Once
+}
+
+func (input *signaledInput) Read(p []byte) (int, error) {
+	input.signal.Do(func() { close(input.entered) })
+	return input.ReadCloser.Read(p)
+}
+
+func TestCancellationUnblocksIdlePipe(t *testing.T) {
+	for _, useDeadline := range []bool{false, true} {
+		name := "cause"
+		if useDeadline {
+			name = "deadline"
+		}
+		t.Run(name, func(t *testing.T) {
+			reader, writer := io.Pipe()
+			defer reader.Close()
+			defer writer.Close()
+			input := &signaledInput{ReadCloser: reader, entered: make(chan struct{})}
+			var ctx context.Context
+			var cancel func()
+			cause := errors.New("caller canceled idle input")
+			if useDeadline {
+				deadlineCtx, deadlineCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+				ctx, cancel = deadlineCtx, deadlineCancel
+				cause = context.DeadlineExceeded
+			} else {
+				causeCtx, causeCancel := context.WithCancelCause(context.Background())
+				ctx, cancel = causeCtx, func() { causeCancel(cause) }
+			}
+			defer cancel()
+			proc := &probeProcessor{}
+			done := make(chan error, 1)
+			go func() { done <- Run(ctx, input, false, proc) }()
+			select {
+			case <-input.entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("runner did not enter Read")
+			}
+			if !useDeadline {
+				cancel()
+			}
+			select {
+			case err := <-done:
+				if !errors.Is(err, cause) {
+					t.Fatalf("lost cancellation cause: %v", err)
+				}
+				if proc.rows != 0 || proc.completed != 0 {
+					t.Fatal("processed or completed canceled input")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("cancellation did not unblock the idle pipe")
+			}
+		})
+	}
+}
+
+type trackedInput struct {
+	io.Reader
+	closed   bool
+	closeErr error
+}
+
+func (input *trackedInput) Close() error { input.closed = true; return input.closeErr }
+
+func TestOrdinaryCompletionLeavesInputOpen(t *testing.T) {
+	for _, stop := range []bool{false, true} {
+		input := &trackedInput{Reader: strings.NewReader("one\ntwo\n")}
+		ctx, cancel := context.WithCancel(context.Background())
+		proc := &probeProcessor{stopRow: stop}
+		if err := Run(ctx, input, false, proc); err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		if input.closed {
+			t.Fatal("closed caller input on ordinary completion or late cancellation")
+		}
+	}
+}
+
+func TestCancellationDuringCompletionPreservesCause(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	cause := errors.New("canceled while completing")
+	proc := &probeProcessor{afterComplete: func() { cancel(cause) }}
+	err := Run(ctx, io.NopCloser(strings.NewReader("")), false, proc)
+	if !errors.Is(err, cause) {
+		t.Fatalf("lost cancellation during completion: %v", err)
+	}
+}
+
+type closingInput struct {
+	io.ReadCloser
+	closeStarted, closeRelease chan struct{}
+	closeErr                   error
+}
+
+func (input *closingInput) Close() error {
+	err := input.ReadCloser.Close()
+	close(input.closeStarted)
+	<-input.closeRelease
+	return errors.Join(err, input.closeErr)
+}
+
+func TestCancellationJoinsCloseAndPreservesItsError(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	closeErr := errors.New("close failed")
+	source := &closingInput{ReadCloser: reader, closeStarted: make(chan struct{}), closeRelease: make(chan struct{}), closeErr: closeErr}
+	defer close(source.closeRelease)
+	input := &signaledInput{ReadCloser: source, entered: make(chan struct{})}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cause := errors.New("caller canceled")
+	defer cancel(nil)
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, input, false, &probeProcessor{}) }()
+	select {
+	case <-input.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("read not started")
+	}
+	cancel(cause)
+	select {
+	case <-source.closeStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("close not started")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("returned before cancellation cleanup completed: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	source.closeRelease <- struct{}{}
+	select {
+	case err := <-done:
+		if !errors.Is(err, cause) || !errors.Is(err, closeErr) {
+			t.Fatalf("lost failure: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner did not finish after close")
 	}
 }

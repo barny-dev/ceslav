@@ -23,7 +23,32 @@ type Initializer = func(*cobra.Command, Sink) (Processor, error)
 
 // Run processes one record at a time. A deliberate stop completes the processor
 // without reading another record. Failures and cancellation skip completion.
-func Run(ctx context.Context, input *csv.Reader, hasHeader bool, proc Processor) error {
+// Cancellation closes input to interrupt a pending Read; Close must unblock Read.
+// On ordinary completion input stays open and remains the caller's responsibility.
+func Run(ctx context.Context, input io.ReadCloser, hasHeader bool, proc Processor) (outcome error) {
+	if ctx.Err() != nil {
+		return context.Cause(ctx)
+	}
+	closed := make(chan struct{})
+	var closeErr error
+	stop := context.AfterFunc(ctx, func() {
+		closeErr = input.Close()
+		close(closed)
+	})
+	defer func() {
+		if !stop() {
+			// Join a callback that has started, so it cannot close input after
+			// the caller resumes or race with normal input cleanup.
+			<-closed
+		}
+		if cause := context.Cause(ctx); cause != nil && !errors.Is(outcome, cause) {
+			outcome = errors.Join(cause, outcome)
+		}
+		if closeErr != nil {
+			outcome = errors.Join(outcome, fmt.Errorf("close canceled input: %w", closeErr))
+		}
+	}()
+	inputCSV := csv.NewReader(input)
 	complete := func() error {
 		if err := ctx.Err(); err != nil {
 			return context.Cause(ctx)
@@ -37,7 +62,7 @@ func Run(ctx context.Context, input *csv.Reader, hasHeader bool, proc Processor)
 		if err := ctx.Err(); err != nil {
 			return context.Cause(ctx)
 		}
-		values, err := input.Read()
+		values, err := inputCSV.Read()
 		if ctx.Err() != nil {
 			return context.Cause(ctx)
 		}

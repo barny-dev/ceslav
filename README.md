@@ -55,6 +55,8 @@ Input uses comma-separated CSV, including quoted fields and quoted newlines. Rec
 
 Errors go to standard error with a nonzero exit code. CSV parse and processing errors identify the record; column errors identify the selector. Output files open only when the command is ready to emit output, so configuration and input errors in these two commands leave existing destinations untouched. Identical input/output files, including hard-link and symlink aliases, are rejected. Output write/flush/close errors are reported; output may be partial after an I/O failure. Redirecting stdout with the shell can truncate a destination before ceslav starts, so use `-o` when file identity checks are needed.
 
+Cancellation closes the active input stream, including standard input when selected, to interrupt a blocked read. Standard input stays open on ordinary completion and deliberate early stop.
+
 Use `ceslav --help`, `ceslav sort --help` and `ceslav row-count --help` for options. Set `CESLAV_LOG` to a file path to enable diagnostic logging.
 
 Implementation progress is tracked in [docs/implementation-plan.md](docs/implementation-plan.md).

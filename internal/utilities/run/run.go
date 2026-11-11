@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/barny-dev/ceslav/internal/flags"
 	"github.com/barny-dev/ceslav/internal/utilities/processor"
@@ -50,9 +51,10 @@ func RunOneToOneCommand(cmd *cobra.Command, initialize processor.Initializer) (o
 	if err != nil {
 		return err
 	}
+	input := &closeOnceInput{ReadCloser: inputFile}
 	defer func() {
 		if inputFile != os.Stdin {
-			if err := inputFile.Close(); err != nil {
+			if err := input.Close(); err != nil && !errors.Is(outcome, err) {
 				outcome = errors.Join(outcome, fmt.Errorf("close input: %w", err))
 			}
 		}
@@ -65,8 +67,7 @@ func RunOneToOneCommand(cmd *cobra.Command, initialize processor.Initializer) (o
 		outcome = errors.Join(outcome, finishOutput(outputCSV, closer))
 	}()
 
-	inputCSV := csv.NewReader(inputFile)
-	if err := processor.Run(cmd.Context(), inputCSV, flags.HasHeader(cmd), proc); err != nil {
+	if err := processor.Run(cmd.Context(), input, flags.HasHeader(cmd), proc); err != nil {
 		return err
 	}
 	return openOutput()
@@ -86,4 +87,16 @@ func finishOutput(writer *csv.Writer, closer io.Closer) (outcome error) {
 		}
 	}
 	return outcome
+}
+
+// The cancellation callback and normal cleanup share one close operation.
+type closeOnceInput struct {
+	io.ReadCloser
+	once sync.Once
+	err  error
+}
+
+func (input *closeOnceInput) Close() error {
+	input.once.Do(func() { input.err = input.ReadCloser.Close() })
+	return input.err
 }
