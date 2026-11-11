@@ -6,7 +6,7 @@ Status distinguishes implementation, verification and merge. A completed impleme
 
 | Step | Scope | Status |
 | --- | --- | --- |
-| 1 | Repair the foundation and make validation repeatable | Implemented locally; CI/review pending |
+| 1 | Repair the foundation and make validation repeatable | Implemented and verified; PR #1 open, review/merge pending |
 | 2 | Column projection and first/last row operations | Not started |
 | 3 | Typed values and date/time conversions | Not started |
 | 4 | Shared expressions, derived columns and filtering | Not started |
@@ -25,7 +25,7 @@ Status distinguishes implementation, verification and merge. A completed impleme
 - [x] Add regression and lifecycle tests.
 - [x] Refresh README and CLI help.
 - [x] Add CI for Go 1.22.7 on Linux/Windows and stable Go on Linux/macOS.
-- [ ] Verify the hosted CI jobs.
+- [x] Verify the hosted CI jobs: [successful run](https://github.com/barny-dev/ceslav/actions/runs/43090324317).
 - [x] Complete local review and record validation results.
 - [x] Open the implementation pull request: [#1](https://github.com/barny-dev/ceslav/pull/1).
 - [ ] Merge after review.
@@ -36,7 +36,7 @@ Status distinguishes implementation, verification and merge. A completed impleme
 
 Replaced the three-goroutine CSV pipeline with one record-processing loop. Output opens lazily after processor validation; file identities are compared before truncation. Sorting now uses a shared column resolver and validates every numeric key before insertion. The test harness builds its executable in a temporary directory.
 
-Local checks passed on Go 1.22.7 / Linux: `go test ./...`, `go test -race -count=1 ./...`, `go vet ./...`, and `git diff --check`. Regression coverage includes all 10 pre-existing cases, arbitrary/ambiguous named columns, singleton invalid values/indices, malformed and multiline CSV, file permissions and output errors, same-file aliases, and destination preservation on invalid input. Unit tests cover graceful early stop, completion counts, cancellation causes, and combined flush/close failures. Hosted Linux (minimum/stable Go) and Windows (minimum Go) checks passed. The initial macOS 26 / Go 1.22.7 job failed before tests ran because dyld rejected the old linker output (`missing LC_UUID`). macOS now uses stable Go; the revised matrix is being verified in [PR #1](https://github.com/barny-dev/ceslav/pull/1). Pull request review and merge are pending. Push CI is limited to `master` to avoid duplicating pull-request jobs.
+Local checks passed on Go 1.22.7 / Linux: `go test ./...`, `go test -race -count=1 ./...`, `go vet ./...`, and `git diff --check`. Regression coverage includes all 10 pre-existing cases, arbitrary/ambiguous named columns, singleton invalid values/indices, malformed and multiline CSV, file permissions and output errors, same-file aliases, and destination preservation on invalid input. Unit tests cover graceful early stop, completion counts, cancellation causes (including cancellation during a read), and combined flush/close failures. Hosted Linux (minimum/stable Go) and Windows (minimum Go) checks passed. The initial macOS 26 / Go 1.22.7 job failed before tests ran because dyld rejected the old linker output (`missing LC_UUID`). macOS now uses stable Go. The final implementation commit `e18349fb62d41d8c55df920f38ee8ab7c8d602ad` passed all four jobs in [CI run 43090324317](https://github.com/barny-dev/ceslav/actions/runs/43090324317). Pull request review and merge are pending. Push CI is limited to `master` to avoid duplicating pull-request jobs.
 
 ## Remaining scope
 
@@ -47,3 +47,7 @@ Step 3 introduces explicit numeric, string, Boolean, date, time-of-day and datet
 Step 4 shares a compiled scalar expression evaluator between `derive` and `filter`.
 
 Step 5 reuses that evaluator for temporal/expression sort keys, caches keys per row, and makes equal keys stable. The existing heap and repeated comparison-time numeric parsing remain until that step.
+
+### 2026-11-11 — Verification complete
+
+All four hosted jobs passed: Go 1.22.7 on Linux and Windows, stable Go on Linux and macOS. Each job builds, runs vet, and runs the test suite with the race detector. Local source and the published implementation commit were compared before finalizing this log. This final tracking update changes documentation only. Step 1 is ready for review in [PR #1](https://github.com/barny-dev/ceslav/pull/1); steps 2–5 remain unstarted.
