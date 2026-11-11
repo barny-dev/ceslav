@@ -5,7 +5,7 @@ import (
 )
 
 func TestCountRows(t *testing.T) {
-	cmd := WithCommand("./out/ceslav").
+	cmd := WithCommand(testBinary).
 		WithArgs("row-count", "-k").
 		WithStdin("\"Smith\",\"Adam\",\"5000 EUR\",\"2001-12-01\"\n\"Goldman\",\"Anise\",\"8000 EUR\",\"1991-01-23\"\n\"Stevenson\",\"Steve\",\"7500 EUR\",\"1974-07-20\"")
 
@@ -22,7 +22,7 @@ func TestCountRows(t *testing.T) {
 }
 
 func TestCountRowsFromFile(t *testing.T) {
-	cmd := WithCommand("./out/ceslav").
+	cmd := WithCommand(testBinary).
 		WithArgs("row-count", "-i", "testdata/count.csv", "-k")
 
 	output, err := cmd.Run()
@@ -38,7 +38,7 @@ func TestCountRowsFromFile(t *testing.T) {
 }
 
 func TestSortRowsWithHeaderRowOrderingByColumnSpecifiedByNameWithStringValueAscending(t *testing.T) {
-	cmd := WithCommand("./out/ceslav").
+	cmd := WithCommand(testBinary).
 		WithArgs("sort", "-j", "-k", "-b", "+s%name").
 		WithStdin("name,value\nJessie,1\nChris,2\nAlbert,3\nDonald,4")
 
@@ -55,7 +55,7 @@ func TestSortRowsWithHeaderRowOrderingByColumnSpecifiedByNameWithStringValueAsce
 }
 
 func TestSortRowsWithHeaderRowOrderingByColumnSpecifiedByNameWithStringValueDescending(t *testing.T) {
-	cmd := WithCommand("./out/ceslav").
+	cmd := WithCommand(testBinary).
 		WithArgs("sort", "-j", "-k", "-b", "-s%name").
 		WithStdin("name,value\nJessie,1\nChris,2\nAlbert,3\nDonald,4")
 
@@ -72,7 +72,7 @@ func TestSortRowsWithHeaderRowOrderingByColumnSpecifiedByNameWithStringValueDesc
 }
 
 func TestSortRowsWithHeaderRowOrderingByColumnSpecifiedByIndexWithStringValueAscending(t *testing.T) {
-	cmd := WithCommand("./out/ceslav").
+	cmd := WithCommand(testBinary).
 		WithArgs("sort", "-j", "-k", "-b", "+s#0").
 		WithStdin("name,value\nJessie,1\nChris,2\nAlbert,3\nDonald,4")
 
@@ -89,7 +89,7 @@ func TestSortRowsWithHeaderRowOrderingByColumnSpecifiedByIndexWithStringValueAsc
 }
 
 func TestSortRowsWithHeaderRowOrderingByColumnSpecifiedByIndexWithStringValueDescending(t *testing.T) {
-	cmd := WithCommand("./out/ceslav").
+	cmd := WithCommand(testBinary).
 		WithArgs("sort", "-j", "-k", "-b", "-s#0").
 		WithStdin("name,value\nJessie,1\nChris,2\nAlbert,3\nDonald,4")
 
@@ -106,7 +106,7 @@ func TestSortRowsWithHeaderRowOrderingByColumnSpecifiedByIndexWithStringValueDes
 }
 
 func TestSortRowsWithHeaderRowOrderingByColumnSpecifiedByIndexWithDecimalValueAscending(t *testing.T) {
-	cmd := WithCommand("./out/ceslav").
+	cmd := WithCommand(testBinary).
 		WithArgs("sort", "-j", "-k", "-b", "+d#1").
 		WithStdin("name,value\nKarol,99\nStephanie,-1\nAlbert,62\nDonald,4\n")
 
@@ -123,7 +123,7 @@ func TestSortRowsWithHeaderRowOrderingByColumnSpecifiedByIndexWithDecimalValueAs
 }
 
 func TestSortRowsWithHeaderRowOrderingByColumnSpecifiedByIndexWithDecimalValueDescending(t *testing.T) {
-	cmd := WithCommand("./out/ceslav").
+	cmd := WithCommand(testBinary).
 		WithArgs("sort", "-j", "-k", "-b", "-d#1").
 		WithStdin("name,value\nKarol,99\nStephanie,-1\nAlbert,62\nDonald,4\n")
 
@@ -140,7 +140,7 @@ func TestSortRowsWithHeaderRowOrderingByColumnSpecifiedByIndexWithDecimalValueDe
 }
 
 func TestSortRowsWithoutHeaderRowOrderingByColumnSpecifiedByIndexWithDecimalValueDescending(t *testing.T) {
-	cmd := WithCommand("./out/ceslav").
+	cmd := WithCommand(testBinary).
 		WithArgs("sort", "-b", "-d#1").
 		WithStdin("Karol,99\nStephanie,-1\nAlbert,62\nDonald,4\n")
 
@@ -157,7 +157,7 @@ func TestSortRowsWithoutHeaderRowOrderingByColumnSpecifiedByIndexWithDecimalValu
 }
 
 func TestSortRowsWithoutHeaderRowOrderingByColumnSpecifiedByIndexWithDecimalValueAscending(t *testing.T) {
-	cmd := WithCommand("./out/ceslav").
+	cmd := WithCommand(testBinary).
 		WithArgs("sort", "-b", "+d#1").
 		WithStdin("Karol,99\nStephanie,-1\nAlbert,62\nDonald,4\n")
 

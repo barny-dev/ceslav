@@ -2,8 +2,10 @@ package sortfunction
 
 import (
 	"cmp"
-	"github.com/barny-dev/ceslav/internal/utilities/row"
+	"fmt"
 	"math/big"
+
+	"github.com/barny-dev/ceslav/internal/utilities/row"
 )
 
 type Ord = int
@@ -39,14 +41,22 @@ func AsString(ascending bool, columnIndex int) SortFunction {
 
 func AsDecimal(ascending bool, columnIndex int) SortFunction {
 	return func(a, b row.Row) Ord {
-		v1 := new(big.Rat)
-		v2 := new(big.Rat)
-		v1.SetString(a.Columns[columnIndex])
-		v2.SetString(b.Columns[columnIndex])
+		// Rows are validated before entering the heap.
+		v1, _ := ParseDecimal(a.Columns[columnIndex])
+		v2, _ := ParseDecimal(b.Columns[columnIndex])
 		o := v1.Cmp(v2)
 		if !ascending {
 			o = -o
 		}
 		return o
 	}
+}
+
+// ParseDecimal preserves the existing exact rational input grammar.
+func ParseDecimal(text string) (*big.Rat, error) {
+	value, ok := new(big.Rat).SetString(text)
+	if !ok {
+		return nil, fmt.Errorf("invalid number %q", text)
+	}
+	return value, nil
 }

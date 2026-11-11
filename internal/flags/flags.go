@@ -1,14 +1,16 @@
 package flags
 
 import (
+	"errors"
 	"fmt"
+	"os"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"os"
 )
 
 func AddInputFileFlag(fs *pflag.FlagSet) {
-	fs.StringP("input", "i", "-", "csv input file ('-' for stdin) ")
+	fs.StringP("input", "i", "-", "CSV input file ('-' for stdin)")
 }
 
 func GetInputFileFlag(fs *pflag.FlagSet) string {
@@ -20,7 +22,7 @@ func GetInputFileFlag(fs *pflag.FlagSet) string {
 }
 
 func AddOutputFileFlag(fs *pflag.FlagSet) {
-	fs.StringP("output", "o", "-", "csv output file ('-' for stdout)")
+	fs.StringP("output", "o", "-", "CSV output file ('-' for stdout)")
 }
 
 func GetOutputFileFlag(fs *pflag.FlagSet) string {
@@ -44,7 +46,7 @@ func GetHeaderRowFlag(fs *pflag.FlagSet) bool {
 }
 
 func AddOutputHeaderRowFlag(fs *pflag.FlagSet) {
-	fs.BoolP("output-header", "k", false, "expect header row on output")
+	fs.BoolP("output-header", "k", false, "write a header row on output")
 }
 
 func GetOutputHeaderRowFlag(fs *pflag.FlagSet) bool {
@@ -77,16 +79,37 @@ func GetInput(cmd *cobra.Command) (*os.File, error) {
 	return file, nil
 }
 
-func GetOutput(cmd *cobra.Command) (*os.File, error) {
+// GetOutput opens without truncating first, so aliases of the input can be
+// checked using open file identities (including hard links and symlinks).
+func GetOutput(cmd *cobra.Command, input *os.File) (*os.File, error) {
 	fileName := GetOutputFileFlag(cmd.Flags())
 	if fileName == "-" {
 		return os.Stdout, nil
 	}
-
-	file, openErr := os.OpenFile(fileName, os.O_CREATE|os.O_TRUNC, 0)
-	if openErr != nil {
-		return nil, fmt.Errorf("could not open output file %s, %w", fileName, openErr)
+	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		return nil, fmt.Errorf("open output %q: %w", fileName, err)
 	}
-
+	fail := func(err error) (*os.File, error) {
+		return nil, errors.Join(err, file.Close())
+	}
+	inputInfo, err := input.Stat()
+	if err != nil {
+		return fail(fmt.Errorf("stat input: %w", err))
+	}
+	outputInfo, err := file.Stat()
+	if err != nil {
+		return fail(fmt.Errorf("stat output: %w", err))
+	}
+	if os.SameFile(inputInfo, outputInfo) {
+		return fail(errors.New("input and output refer to the same file"))
+	}
+	// Pipes and devices do not support Truncate; opening them already positions
+	// the stream correctly. Only regular files need their previous data removed.
+	if outputInfo.Mode().IsRegular() {
+		if err := file.Truncate(0); err != nil {
+			return fail(fmt.Errorf("truncate output %q: %w", fileName, err))
+		}
+	}
 	return file, nil
 }

@@ -3,93 +3,58 @@ package sort
 import (
 	"errors"
 	"fmt"
-	"strconv"
+
+	"github.com/barny-dev/ceslav/internal/columns"
 )
 
 const ColumnTypeString = "string"
 const ColumnTypeDecimal = "decimal"
-
-const ColumnByName = "name"
-const ColumnByIndex = "index"
-
 const DirectionAscending = true
 const DirectionDescending = false
 
 type SortKey struct {
 	sortDirection bool
 	columnType    string
-	columnBy      string
-	columnIndex   uint64
-	columnName    string
+	column        columns.Reference
 }
 
 func ParseSortKey(src string) (SortKey, error) {
-	runes := []rune(src)
-
-	if len(runes) < 4 {
-		return SortKey{}, errors.New("sort key too short")
+	if len(src) < 4 {
+		return SortKey{}, errors.New("sort key too short: expected direction, type and column (for example +s#0)")
 	}
-
-	direction, err := parseDirection(runes[0])
+	direction, err := parseDirection(src[0])
 	if err != nil {
-		return SortKey{}, fmt.Errorf("sort-key: char [0] - %v", err)
+		return SortKey{}, fmt.Errorf("sort-key %q: %w", src, err)
 	}
-
-	columnType, err := parseType(runes[1])
+	columnType, err := parseType(src[1])
 	if err != nil {
-		return SortKey{}, fmt.Errorf("sort-key: char [1] - %v", err)
+		return SortKey{}, fmt.Errorf("sort-key %q: %w", src, err)
 	}
-
-	columnBy, columnName, columnIndex, err := parseColumnSpecifier(runes[2:])
+	column, err := columns.Parse(src[2:])
 	if err != nil {
-		return SortKey{}, fmt.Errorf("sort-key: char [2:%d] - %v", len(runes), err)
+		return SortKey{}, fmt.Errorf("sort-key %q: %w", src, err)
 	}
-	return SortKey{
-		sortDirection: direction,
-		columnType:    columnType,
-		columnBy:      columnBy,
-		columnIndex:   columnIndex,
-		columnName:    columnName,
-	}, nil
+	return SortKey{sortDirection: direction, columnType: columnType, column: column}, nil
 }
 
-func parseDirection(ch rune) (bool, error) {
-	if ch == '+' {
+func parseDirection(ch byte) (bool, error) {
+	switch ch {
+	case '+':
 		return DirectionAscending, nil
-	} else if ch == '-' {
+	case '-':
 		return DirectionDescending, nil
-	} else {
+	default:
 		return false, errors.New("sort direction specifier must be [+|-]")
 	}
 }
 
-func parseType(ch rune) (string, error) {
-	if ch == 's' {
+func parseType(ch byte) (string, error) {
+	switch ch {
+	case 's':
 		return ColumnTypeString, nil
-	} else if ch == 'd' {
+	case 'd':
 		return ColumnTypeDecimal, nil
-	} else {
+	default:
 		return "", errors.New("column type specifier must be [s|d]")
 	}
-}
-
-func parseColumnSpecifier(runes []rune) (
-	columnBy string,
-	columnName string,
-	columnIndex uint64,
-	err error,
-) {
-	if runes[0] == '%' {
-		columnBy = ColumnByName
-		columnName = string(runes[1:])
-	} else if runes[0] == '#' {
-		columnBy = ColumnByIndex
-		columnIndex, err = strconv.ParseUint(string(runes[1:]), 10, 32)
-		if err != nil {
-			err = errors.New("column index must be valid integer")
-		}
-	} else {
-		err = errors.New("column specifier must start with [%|#]")
-	}
-	return columnBy, columnName, columnIndex, err
 }
