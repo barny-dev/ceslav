@@ -388,3 +388,37 @@ func TestCancellationPreservesProcessingAndCleanupFailures(t *testing.T) {
 		})
 	}
 }
+
+type startProbe struct {
+	*probeProcessor
+	stop   bool
+	err    error
+	starts int
+}
+
+func (proc *startProbe) Start() (bool, error) { proc.starts++; return proc.stop, proc.err }
+
+func TestStarterCanStopWithoutReading(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		failure := errors.New("start failed")
+		reader := &failingReader{cause: errors.New("unexpected read")}
+		proc := &startProbe{probeProcessor: &probeProcessor{}, stop: true}
+		if fail {
+			proc.err = failure
+		}
+		err := Run(context.Background(), io.NopCloser(reader), false, proc)
+		if fail && !errors.Is(err, failure) {
+			t.Fatalf("lost start error: %v", err)
+		}
+		if !fail && err != nil {
+			t.Fatal(err)
+		}
+		wantComplete := 1
+		if fail {
+			wantComplete = 0
+		}
+		if reader.called || proc.starts != 1 || proc.completed != wantComplete || proc.rows != 0 {
+			t.Fatal("invalid start/complete lifecycle")
+		}
+	}
+}

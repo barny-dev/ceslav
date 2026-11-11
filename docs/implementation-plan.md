@@ -3,7 +3,7 @@
 | Goal | Status |
 | --- | --- |
 | 1. Reliable CSV processing, validation and tests | Complete |
-| 2. Column projection and row selection | Planned |
+| 2. Column projection and row selection | Complete |
 | 3. Typed values and temporal conversions | Planned |
 | 4. Row expressions, derived columns and filtering | Planned |
 | 5. Expression sorting and stable ties | Planned |
@@ -25,12 +25,12 @@
 
 ## 2. Column projection and row selection
 
-- [ ] Select columns in an explicit order, covering selection and reordering.
-- [ ] Drop columns while retaining the original order of the remainder.
-- [ ] Apply column projection to headers consistently.
-- [ ] Keep or drop the first N data records using constant auxiliary row storage.
-- [ ] Keep or drop the last N data records using a buffer bounded by N.
-- [ ] Define zero, oversized and invalid counts; exclude headers from row counts.
+- [x] Select columns in an explicit order, covering selection and reordering.
+- [x] Drop columns while retaining the original order of the remainder.
+- [x] Apply column projection to headers consistently.
+- [x] Keep or drop the first N data records using constant auxiliary row storage.
+- [x] Keep or drop the last N data records using a buffer bounded by N.
+- [x] Define zero, oversized and invalid counts; exclude headers from row counts.
 
 ## 3. Typed values and temporal conversions
 

@@ -1,14 +1,60 @@
 package run
 
 import (
+	"bytes"
 	"encoding/csv"
 	"errors"
 	"io"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestWriteRecordPreservesSingleEmptyFieldsAndOrder(t *testing.T) {
+	for _, crlf := range []bool{false, true} {
+		var output bytes.Buffer
+		writer := csv.NewWriter(&output)
+		writer.UseCRLF = crlf
+		records := [][]string{{"first"}, {""}, {""}, {"last"}}
+		for _, record := range records {
+			if err := writeRecord(writer, &output, record); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := finishOutput(writer, nil); err != nil {
+			t.Fatal(err)
+		}
+		want := "first\n\"\"\n\"\"\nlast\n"
+		if crlf {
+			want = "first\r\n\"\"\r\n\"\"\r\nlast\r\n"
+		}
+		if output.String() != want {
+			t.Fatalf("got %q, want %q", output.String(), want)
+		}
+		got, err := csv.NewReader(&output).ReadAll()
+		if err != nil || !reflect.DeepEqual(got, records) {
+			t.Fatalf("round trip: %v, %v", got, err)
+		}
+	}
+}
+
+func TestWriteEmptyRecordPreservesWriteFailures(t *testing.T) {
+	failure := errors.New("write failed")
+	for _, buffered := range []bool{false, true} {
+		output := &failedOutput{writeErr: failure}
+		writer := csv.NewWriter(output)
+		if buffered {
+			if err := writer.Write([]string{"before"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := writeRecord(writer, output, []string{""}); !errors.Is(err, failure) {
+			t.Fatalf("lost write failure: %v", err)
+		}
+	}
+}
 
 type failedOutput struct {
 	writeErr, closeErr error
