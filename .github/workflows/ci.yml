@@ -24,7 +24,7 @@ jobs:
             go: stable
           # Old Go linkers produce binaries rejected by current macOS dyld.
           - os: macos-latest
-            go: stable
+            go: '1.27.4'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:

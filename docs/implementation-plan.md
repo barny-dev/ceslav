@@ -19,6 +19,7 @@
 - [x] Share column-name/index resolution and validate missing, ambiguous and out-of-range references.
 - [x] Require sort keys and validate numeric values, including singleton inputs.
 - [x] Build integration-test executables automatically and cover processing regressions.
+- [x] Cover cancellation, cleanup ownership, sorting and counting with focused unit tests alongside I/O tests.
 - [x] Maintain build, vet and race-test CI coverage across Linux, macOS and Windows.
 - [x] Document the implemented commands and their input/output semantics.
 

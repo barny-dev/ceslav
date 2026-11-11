@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -15,11 +16,15 @@ type probeProcessor struct {
 	stopHeader, stopRow            bool
 	headerErr, rowErr, completeErr error
 	afterRow                       func()
+	afterHeader                    func()
 	afterComplete                  func()
 }
 
 func (p *probeProcessor) ProcessHeader([]string) (bool, error) {
 	p.headers++
+	if p.afterHeader != nil {
+		p.afterHeader()
+	}
 	return p.stopHeader, p.headerErr
 }
 func (p *probeProcessor) ProcessRow([]string) (bool, error) {
@@ -303,5 +308,83 @@ func TestCancellationJoinsCloseAndPreservesItsError(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("runner did not finish after close")
+	}
+}
+
+type unitInput struct {
+	reader   io.Reader
+	reads    int
+	closes   atomic.Int32
+	onClose  func()
+	closeErr error
+}
+
+func (input *unitInput) Read(p []byte) (int, error) { input.reads++; return input.reader.Read(p) }
+func (input *unitInput) Close() error {
+	input.closes.Add(1)
+	if input.onClose != nil {
+		input.onClose()
+	}
+	return input.closeErr
+}
+
+func TestAlreadyCanceledRunDoesNotTouchInputOrProcessor(t *testing.T) {
+	input := &unitInput{reader: strings.NewReader("header\nvalue\n")}
+	proc := &probeProcessor{}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cause := errors.New("canceled before start")
+	cancel(cause)
+	if err := Run(ctx, input, true, proc); !errors.Is(err, cause) {
+		t.Fatalf("lost cause: %v", err)
+	}
+	if input.reads != 0 || input.closes.Load() != 0 {
+		t.Fatal("touched input after pre-cancellation")
+	}
+	if proc.headers != 0 || proc.rows != 0 || proc.completed != 0 {
+		t.Fatal("processed pre-canceled input")
+	}
+}
+
+func TestCancellationPreservesProcessingAndCleanupFailures(t *testing.T) {
+	for _, phase := range []string{"header", "row", "completion"} {
+		t.Run(phase, func(t *testing.T) {
+			cause, processErr, closeErr := errors.New("caller canceled"), errors.New("processor failed"), errors.New("close failed")
+			closed := make(chan struct{})
+			input := &unitInput{reader: strings.NewReader("header\nfirst\nsecond\n"), onClose: func() { close(closed) }, closeErr: closeErr}
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(nil)
+			cancelAndWait := func() {
+				cancel(cause)
+				select {
+				case <-closed:
+				case <-time.After(5 * time.Second):
+					t.Fatal("cancellation did not close input")
+				}
+			}
+			proc := &probeProcessor{}
+			wantHeaders, wantRows, wantComplete := 1, 0, 0
+			switch phase {
+			case "header":
+				proc.afterHeader, proc.headerErr = cancelAndWait, processErr
+			case "row":
+				proc.afterRow, proc.rowErr = cancelAndWait, processErr
+				wantRows = 1
+			case "completion":
+				proc.afterComplete, proc.completeErr = cancelAndWait, processErr
+				wantRows, wantComplete = 2, 1
+			}
+			err := Run(ctx, input, true, proc)
+			for _, want := range []error{cause, processErr, closeErr} {
+				if !errors.Is(err, want) {
+					t.Fatalf("lost %v from combined error: %v", want, err)
+				}
+			}
+			if proc.headers != wantHeaders || proc.rows != wantRows || proc.completed != wantComplete {
+				t.Fatalf("processing continued after failure: %d headers, %d rows, %d completions", proc.headers, proc.rows, proc.completed)
+			}
+			if input.closes.Load() != 1 {
+				t.Fatalf("closed input %d times", input.closes.Load())
+			}
+		})
 	}
 }
