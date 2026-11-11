@@ -24,10 +24,10 @@ Status distinguishes implementation, verification and merge. A completed impleme
 - [x] Make integration tests build a temporary executable and avoid pipe deadlocks.
 - [x] Add regression and lifecycle tests.
 - [x] Refresh README and CLI help.
-- [x] Add CI for Linux/macOS/Windows on Go 1.22.7 and Linux on stable Go.
+- [x] Add CI for Go 1.22.7 on Linux/Windows and stable Go on Linux/macOS.
 - [ ] Verify the hosted CI jobs.
 - [x] Complete local review and record validation results.
-- [ ] Open the implementation pull request.
+- [x] Open the implementation pull request: [#1](https://github.com/barny-dev/ceslav/pull/1).
 - [ ] Merge after review.
 
 ## Execution log
@@ -36,7 +36,7 @@ Status distinguishes implementation, verification and merge. A completed impleme
 
 Replaced the three-goroutine CSV pipeline with one record-processing loop. Output opens lazily after processor validation; file identities are compared before truncation. Sorting now uses a shared column resolver and validates every numeric key before insertion. The test harness builds its executable in a temporary directory.
 
-Local checks passed on Go 1.22.7 / Linux: `go test ./...`, `go test -race -count=1 ./...`, `go vet ./...`, and `git diff --check`. Regression coverage includes all 10 pre-existing cases, arbitrary/ambiguous named columns, singleton invalid values/indices, malformed and multiline CSV, file permissions and output errors, same-file aliases, and destination preservation on invalid input. Unit tests cover graceful early stop, completion counts, cancellation causes, and combined flush/close failures. Hosted CI and pull request review are still pending.
+Local checks passed on Go 1.22.7 / Linux: `go test ./...`, `go test -race -count=1 ./...`, `go vet ./...`, and `git diff --check`. Regression coverage includes all 10 pre-existing cases, arbitrary/ambiguous named columns, singleton invalid values/indices, malformed and multiline CSV, file permissions and output errors, same-file aliases, and destination preservation on invalid input. Unit tests cover graceful early stop, completion counts, cancellation causes, and combined flush/close failures. Hosted Linux (minimum/stable Go) and Windows (minimum Go) checks passed. The initial macOS 26 / Go 1.22.7 job failed before tests ran because dyld rejected the old linker output (`missing LC_UUID`). macOS now uses stable Go; the revised matrix is being verified in [PR #1](https://github.com/barny-dev/ceslav/pull/1). Pull request review and merge are pending. Push CI is limited to `master` to avoid duplicating pull-request jobs.
 
 ## Remaining scope
 

@@ -4,7 +4,7 @@ A command-line CSV tool. Currently supports counting records and sorting by stri
 
 ## Build and test
 
-Requires Go 1.22.7 or newer.
+Requires Go 1.22.7 or newer. Use the current stable Go release on recent macOS versions.
 
 ```sh
 go build -o out/ceslav .
@@ -13,7 +13,7 @@ go test -race ./...
 go vet ./...
 ```
 
-Integration tests build a temporary executable themselves; no prior build or `out` directory is required. CI checks Linux, macOS and Windows with the minimum Go version, and Linux with the latest stable Go release.
+Integration tests build a temporary executable themselves; no prior build or `out` directory is required. CI checks Go 1.22.7 on Linux and Windows, and the latest stable Go release on Linux and macOS. The current macOS runner cannot execute some binaries produced by the older Go linker.
 
 ## Commands
 
