@@ -2,19 +2,21 @@ package rowcount
 
 import (
 	"errors"
+	"log"
+	"strconv"
+
 	"github.com/barny-dev/ceslav/internal/flags"
 	"github.com/barny-dev/ceslav/internal/utilities/processor"
 	"github.com/barny-dev/ceslav/internal/utilities/run"
 	"github.com/spf13/cobra"
-	"log"
-	_ "os"
-	"strconv"
 )
 
 func Cmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:  "row-count [FLAGS]",
-		RunE: runCmd,
+		Use:   "row-count [flags]",
+		Short: "Count CSV data records, excluding an optional header",
+		Args:  cobra.NoArgs,
+		RunE:  runCmd,
 	}
 	fs := cmd.Flags()
 	flags.AddInputFileFlag(fs)
