@@ -21,6 +21,12 @@ type Processor interface {
 
 type Initializer = func(*cobra.Command, Sink) (Processor, error)
 
+// Starter is optional for processors that can finish without reading input.
+// It runs before the header/data loop, while normal completion still runs once.
+type Starter interface {
+	Start() (Terminate, error)
+}
+
 // Run processes one record at a time. A deliberate stop completes the processor
 // without reading another record. Failures and cancellation skip completion.
 // Cancellation closes input to interrupt a pending Read; Close must unblock Read.
@@ -57,6 +63,15 @@ func Run(ctx context.Context, input io.ReadCloser, hasHeader bool, proc Processo
 			return fmt.Errorf("complete processing: %w", err)
 		}
 		return nil
+	}
+	if starter, ok := proc.(Starter); ok {
+		stop, err := starter.Start()
+		if err != nil {
+			return fmt.Errorf("start processing: %w", err)
+		}
+		if stop {
+			return complete()
+		}
 	}
 	for record := 1; ; record++ {
 		if err := ctx.Err(); err != nil {
