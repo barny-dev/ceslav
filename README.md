@@ -1,6 +1,6 @@
 # ceslav
 
-A command-line CSV tool. Supports counting and sorting records, selecting/dropping columns, and keeping/dropping first or last records.
+A command-line CSV tool. Supports counting and sorting records, selecting/dropping columns, and selecting, dropping, reordering and reversing records.
 
 ## Build and test
 
@@ -73,13 +73,30 @@ ceslav rows --first 10 -j -k -i input.csv
 ceslav rows --last 10 -j -k -i input.csv
 ceslav rows --first 10 --drop -j -k -i input.csv
 ceslav rows --last 10 --drop -j -k -i input.csv
+
+# Select data rows 1, 3, 4 and 7, in that order.
+ceslav rows '1,3-4,7' -j -k -i input.csv
+
+# Reorder rows, including a descending inclusive range.
+ceslav rows '7,4-3,1' -j -k -i input.csv
+
+# Remove listed rows; reverse the remaining rows.
+ceslav rows '1,3-4,7' --drop --reverse -j -k -i input.csv
+
+# Reverse all data rows, or just the first 10.
+ceslav rows --reverse -j -k -i input.csv
+ceslav rows --first 10 --reverse -j -k -i input.csv
 ```
 
-Choose exactly one of `--first N` and `--last N`. N must be nonnegative and fit the platform's integer range. Headers are excluded from N; `-k` requires `-j` for all transformation commands.
+Choose one selector list, `--first N` or `--last N`. N must be nonnegative and fit the platform's integer range. Selector lists use **one-based data-row numbers** and inclusive ranges, separated by commas. Row numbers must be positive decimal integers fitting a signed 64-bit integer; whitespace around numbers is allowed. Headers are excluded from numbering and counts; `-k` requires `-j` for all transformation commands.
 
-Keeping zero records emits no data and does not read data records; with `-j` it still reads the required header and writes it if `-k` is set. Dropping zero preserves all data. If N exceeds the number of records, keeping retains all available records and dropping removes all of them. Prefix selection stops after N records without waiting for input EOF, so trailing records are not parsed or validated.
+Selector order determines output order. Descending ranges such as `4-2` select rows 4, 3 and 2. Repeated or overlapping selectors repeat those rows in the output; `--drop` removes their union and retains the order of remaining rows. Unavailable row numbers are ignored, and ranges are clipped to available input. An empty selector, row 0, a negative number, an open-ended range or malformed syntax is an error.
 
-Prefix operations use constant auxiliary row storage. Suffix operations use a ring buffer holding at most the smaller of N and the observed record count, without allocating N slots up front. Keeping a suffix emits data at EOF; dropping a suffix streams the prefix with an N-record delay. Retained records stay in their original order.
+`--reverse` reverses the result of selection or dropping; without a selector list or first/last option, it reverses all data rows. The header remains first. `--drop` requires an explicit selection. A selector list cannot be combined with `--first` or `--last`.
+
+Keeping zero records emits no data and does not read data records; with `-j` it still reads the required header and writes it if `-k` is set. Dropping zero preserves all data. If N exceeds the number of records, keeping retains all available records and dropping removes all of them. Keeping a prefix stops after N records, and keeping a selector list stops at its highest requested row, without waiting for input EOF. These early stops also apply with `--reverse`; trailing records are not parsed or validated. Dropping rows and reversing all input read through EOF.
+
+Without reversal, prefix operations use constant auxiliary row storage; suffix operations use a ring buffer holding at most the smaller of N and the observed record count, without allocating N slots up front. Keeping a suffix emits data at EOF; dropping a suffix streams the prefix with an N-record delay. Explicit selection buffers only matching observed rows and emits them at completion in selector order, while dropping explicit selectors streams the remainder. Ranges are stored compactly without expanding their declared size. Reversal buffers the resulting data, except that reversing a kept suffix reuses its bounded ring buffer. Reversing all data therefore needs memory proportional to the input size.
 
 Input uses comma-separated CSV, including quoted fields and quoted newlines. Records must have consistent field counts. Date/time operations, filtering and calculated columns are planned but not yet implemented.
 

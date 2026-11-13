@@ -17,6 +17,30 @@ func TestTransformCommands(t *testing.T) {
 		args                   []string
 		input, want, wantError string
 	}{
+		{"row selector list", []string{"rows", "1,3-4,7"}, "1\n2\n3\n4\n5\n6\n7\n", "1\n3\n4\n7\n", ""},
+		{"reorder descending ranges", []string{"rows", "5,3-1"}, "1\n2\n3\n4\n5\n", "5\n3\n2\n1\n", ""},
+		{"repeat rows", []string{"rows", "2,1-2"}, "a\nb\n", "b\na\nb\n", ""},
+		{"drop row list", []string{"rows", "4-3,1", "--drop"}, "1\n2\n3\n4\n5\n", "2\n5\n", ""},
+		{"reverse dropped rows", []string{"rows", "4-3,1", "--drop", "--reverse"}, "1\n2\n3\n4\n5\n", "5\n2\n", ""},
+		{"reverse all rows", []string{"rows", "--reverse"}, "a\nb\nc\n", "c\nb\na\n", ""},
+		{"reverse selector order", []string{"rows", "3,1-2", "--reverse"}, "a\nb\nc\n", "b\na\nc\n", ""},
+		{"reverse first rows", []string{"rows", "--first", "2", "--reverse"}, "a\nb\nc\n", "b\na\n", ""},
+		{"reverse last rows", []string{"rows", "--last", "2", "--reverse"}, "a\nb\nc\nd\n", "d\nc\n", ""},
+		{"reverse keeps header first", []string{"rows", "--reverse", "-j", "-k"}, "id\na\nb\n", "id\nb\na\n", ""},
+		{"selectors exclude header", []string{"rows", "2,1", "-j", "-k"}, "id\na\nb\n", "id\nb\na\n", ""},
+		{"selected header omitted", []string{"rows", "2,1", "-j"}, "id\na\nb\n", "b\na\n", ""},
+		{"selectors count records", []string{"rows", "2,1"}, "\"two\nlines\"\nlast\n", "last\n\"two\nlines\"\n", ""},
+		{"reverse preserves empty cell", []string{"rows", "--reverse"}, "first\n\"\"\nlast\n", "last\n\"\"\nfirst\n", ""},
+		{"selector clips huge range", []string{"rows", "9223372036854775807-1"}, "a\nb\n", "b\na\n", ""},
+		{"missing rows ignored", []string{"rows", "9,1"}, "a\nb\n", "a\n", ""},
+		{"selectors stop before invalid tail", []string{"rows", "2,1"}, "a,b\nc,d\nbroken\n", "c,d\na,b\n", ""},
+		{"reverse first skips invalid tail", []string{"rows", "--first", "1", "--reverse"}, "a,b\nbroken\n", "a,b\n", ""},
+		{"selectors validate selected prefix", []string{"rows", "2,1"}, "a,b\nbroken\n", "", "input record 2"},
+		{"reverse validates all input", []string{"rows", "--reverse"}, "a,b\nbroken\n", "", "input record 2"},
+		{"drop selectors validate all input", []string{"rows", "1", "--drop"}, "a,b\nbroken\n", "", "input record 2"},
+		{"selector mode conflict", []string{"rows", "1,2", "--first", "2"}, "a\n", "", "exactly one"},
+		{"zero row number", []string{"rows", "0"}, "a\n", "", "invalid row selector"},
+		{"invalid row range", []string{"rows", "1-"}, "a\n", "", "invalid row selector"},
 		{"select empty cells", []string{"select", "-c", "#1"}, "a,\nb,\n", "\"\"\n\"\"\n", ""},
 		{"drop leaves empty cells", []string{"drop", "-c", "#0"}, "a,\nb,\n", "\"\"\n\"\"\n", ""},
 		{"rows preserve empty cells", []string{"rows", "--last", "3"}, "first\n\"\"\nlast\n", "first\n\"\"\nlast\n", ""},
@@ -76,6 +100,10 @@ func TestPrefixAndZeroSelectionDoNotWaitForInputEOF(t *testing.T) {
 		{"first zero", []string{"rows", "--first", "0"}, "", ""},
 		{"last zero", []string{"rows", "--last", "0"}, "", ""},
 		{"zero with header", []string{"rows", "--first", "0", "-j", "-k"}, "header\n", "header\n"},
+		{"selectors", []string{"rows", "3,1"}, "one\ntwo\nthree\n", "three\none\n"},
+		{"reversed selectors", []string{"rows", "3,1", "--reverse"}, "one\ntwo\nthree\n", "one\nthree\n"},
+		{"reversed prefix", []string{"rows", "--first", "2", "--reverse"}, "one\ntwo\n", "two\none\n"},
+		{"reversed zero", []string{"rows", "--first", "0", "--reverse"}, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -129,13 +130,137 @@ func TestHugeLimitAllocatesOnlyForObservedRows(t *testing.T) {
 }
 
 func TestRowsConfigurationErrors(t *testing.T) {
-	for _, args := range [][]string{nil, {"--drop"}, {"--first", "1", "--last", "2"}, {"--first", "-1"}, {"--last", "-1"}, {"--first", "0", "-k"}, {"--first", "9999999999999999999999999"}} {
+	for _, args := range [][]string{nil, {"--drop"}, {"--first", "1", "--last", "2"}, {"--first", "-1"}, {"--last", "-1"}, {"--first", "0", "-k"}, {"--first", "9999999999999999999999999"}, {""}, {"0"}, {"1-"}, {"1", "--first", "2"}, {"--last", "1", "2"}, {"--reverse", "--drop"}, {"1", "2"}, {"--reverse=false"}, {"--reverse", "-k"}} {
 		cmd := Cmd()
 		if err := cmd.ParseFlags(args); err != nil {
 			continue
 		}
 		if _, err := NewProcessor(cmd, func([]string) error { return nil }); err == nil {
 			t.Fatalf("accepted %v", args)
+		}
+	}
+}
+
+func TestRowSelectorsAndReverse(t *testing.T) {
+	records := [][]string{{"1"}, {"2"}, {"3"}, {"4"}, {"5"}, {"6"}, {"7"}}
+	for _, tc := range []struct {
+		name, want string
+		args       []string
+	}{
+		{"selector list", "1,3,4,7", []string{"1,3-4,7"}},
+		{"descending range", "7,4,3,1", []string{"7,4-3,1"}},
+		{"repeated rows", "3,1,3,4", []string{"3,1,3-4"}},
+		{"reverse selectors", "1,3,4,7", []string{"7,4-3,1", "--reverse"}},
+		{"drop selectors", "2,5,6", []string{"1,3-4,7", "--drop"}},
+		{"drop overlaps", "1,6,7", []string{"4-2,3-5", "--drop"}},
+		{"reverse drop selectors", "6,5,2", []string{"1,3-4,7", "--drop", "--reverse"}},
+		{"clip ascending", "6,7", []string{"6-10"}},
+		{"clip descending", "7,6", []string{"10-6"}},
+		{"clip reversed", "6,7", []string{"10-6", "--reverse"}},
+		{"missing selectors", "", []string{"8-10,20-15"}},
+		{"drop missing selectors", "1,2,3,4,5,6,7", []string{"8", "--drop"}},
+		{"reverse all", "7,6,5,4,3,2,1", []string{"--reverse"}},
+		{"reverse first", "3,2,1", []string{"--first", "3", "--reverse"}},
+		{"reverse last wrapped", "7,6,5", []string{"--last", "3", "--reverse"}},
+		{"reverse last oversized", "7,6,5,4,3,2,1", []string{"--last", "10", "--reverse"}},
+		{"reverse drop first", "7,6,5,4", []string{"--first", "3", "--drop", "--reverse"}},
+		{"reverse drop last", "4,3,2,1", []string{"--last", "3", "--drop", "--reverse"}},
+		{"reverse first zero", "", []string{"--first", "0", "--reverse"}},
+		{"reverse last zero", "", []string{"--last", "0", "--reverse"}},
+		{"reverse drop zero", "7,6,5,4,3,2,1", []string{"--last", "0", "--drop", "--reverse"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			proc := newRows(t, tc.args, func(row []string) error { got = append(got, row[0]); return nil })
+			if err := drive(proc, nil, records); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(got, ",") != tc.want {
+				t.Fatalf("got %v, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSelectionAndReverseHeadersAndEmptyInput(t *testing.T) {
+	for _, args := range [][]string{{"2,1"}, {"2-1", "--reverse"}, {"--reverse"}, {"2", "--drop", "--reverse"}} {
+		for _, records := range [][][]string{nil, {{"1"}, {"2"}}} {
+			var got []string
+			withHeader := append(append([]string(nil), args...), "-j", "-k")
+			proc := newRows(t, withHeader, func(row []string) error { got = append(got, row[0]); return nil })
+			if err := drive(proc, []string{"header"}, records); err != nil {
+				t.Fatal(err)
+			}
+			if len(got) == 0 || got[0] != "header" {
+				t.Fatalf("%v moved header: %v", args, got)
+			}
+			if records == nil && len(got) != 1 {
+				t.Fatalf("emitted nonexistent data: %v", got)
+			}
+		}
+		proc := newRows(t, args, func([]string) error { t.Fatal("emitted data for empty input"); return nil })
+		if err := drive(proc, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestReorderedRowsOwnInput(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"3,1,2,1"}, "3,1,2,1"},
+		{[]string{"--reverse"}, "3,2,1"},
+		{[]string{"--first", "2", "--reverse"}, "2,1"},
+		{[]string{"--last", "2", "--reverse"}, "3,2"},
+		{[]string{"1", "--drop", "--reverse"}, "3,2"},
+	} {
+		var got []string
+		proc := newRows(t, tc.args, func(row []string) error { got = append(got, row[0]); return nil })
+		row := []string{""}
+		for i := 1; i <= 3; i++ {
+			row[0] = strconv.Itoa(i)
+			stop, err := proc.ProcessRow(row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stop {
+				break
+			}
+		}
+		row[0] = "overwritten"
+		if err := proc.Complete(); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(got, ",") != tc.want {
+			t.Fatalf("%v: got %v, want %s", tc.args, got, tc.want)
+		}
+	}
+}
+
+func TestSparseSelectionBuffersOnlyMatches(t *testing.T) {
+	var got []string
+	proc := newRows(t, []string{"9223372036854775807,2"}, func(row []string) error { got = append(got, row[0]); return nil })
+	for i := 1; i <= 5; i++ {
+		if _, err := proc.ProcessRow([]string{strconv.Itoa(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(proc.selectedRows) != 1 || len(proc.buffer) != 0 || len(proc.reversed) != 0 {
+		t.Fatal("buffered unselected rows")
+	}
+	if err := proc.Complete(); err != nil || strings.Join(got, ",") != "2" {
+		t.Fatalf("got %v, error %v", got, err)
+	}
+}
+
+func TestSelectionAndReverseSinkErrors(t *testing.T) {
+	failure := errors.New("sink failed")
+	for _, args := range [][]string{{"1"}, {"2", "--drop"}, {"1", "--reverse"}, {"2", "--drop", "--reverse"}, {"--reverse"}, {"--first", "1", "--reverse"}, {"--last", "1", "--reverse"}, {"--last", "1", "--drop", "--reverse"}} {
+		proc := newRows(t, args, func([]string) error { return failure })
+		if err := drive(proc, nil, [][]string{{"a"}, {"b"}, {"c"}}); !errors.Is(err, failure) {
+			t.Fatalf("%v lost sink error: %v", args, err)
 		}
 	}
 }

@@ -12,7 +12,7 @@ func Cmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "ceslav",
 		Short:         "Count, sort and transform CSV records",
-		Long:          "Read CSV from files or standard input; count and sort records, select or drop columns, and keep or drop first/last records.",
+		Long:          "Read CSV from files or standard input; count and sort records, select or drop columns, and select, drop, reorder or reverse rows.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,

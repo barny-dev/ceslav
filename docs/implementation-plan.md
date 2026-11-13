@@ -28,9 +28,12 @@
 - [x] Select columns in an explicit order, covering selection and reordering.
 - [x] Drop columns while retaining the original order of the remainder.
 - [x] Apply column projection to headers consistently.
-- [x] Keep or drop the first N data records using constant auxiliary row storage.
-- [x] Keep or drop the last N data records using a buffer bounded by N.
+- [x] Keep or drop the first N data records using constant auxiliary row storage without reversal.
+- [x] Keep or drop the last N data records using a buffer bounded by N without reversal.
 - [x] Define zero, oversized and invalid counts; exclude headers from row counts.
+- [x] Accept comma-separated one-based row selectors and inclusive ascending/descending ranges.
+- [x] Preserve selector order and repeated rows; drop the union of matching rows and ignore unavailable rows.
+- [x] Reverse all, selected or remaining data rows while keeping the header first.
 
 ## 3. Typed values and temporal conversions
 
