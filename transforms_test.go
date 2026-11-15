@@ -17,6 +17,23 @@ func TestTransformCommands(t *testing.T) {
 		args                   []string
 		input, want, wantError string
 	}{
+		{"compact column names", []string{"select", "name,city", "-j", "-k"}, "name,age,city\nA,30,Gdansk\n", "name,city\nA,Gdansk\n", ""},
+		{"compact mixed selectors", []string{"select", "city,#0-1", "-j", "-k"}, "name,age,city\nA,30,Gdansk\n", "city,name,age\nGdansk,A,30\n", ""},
+		{"compact headerless selectors", []string{"select", "#2,#0-1"}, "a,b,c\n", "c,a,b\n", ""},
+		{"compact descending range", []string{"select", "#2-0", "-j", "-k"}, "name,age,city\nA,30,Gdansk\n", "city,age,name\nGdansk,30,A\n", ""},
+		{"compact column drop", []string{"drop", "age,city", "-j", "-k"}, "name,age,city\nA,30,Gdansk\n", "name\nA\n", ""},
+		{"compact range drop", []string{"drop", "#2-1"}, "a,b,c,d\n", "a,d\n", ""},
+		{"numeric column name", []string{"select", "0", "-j", "-k"}, "name,0\nA,number\n", "0\nnumber\n", ""},
+		{"reserved column name", []string{"select", "%#0", "-j", "-k"}, "name,#0\nA,B\n", "#0\nB\n", ""},
+		{"leading dash in column name", []string{"select", "-j", "-k", "--", "-name,city"}, "-name,age,city\nA,30,Gdansk\n", "-name,city\nA,Gdansk\n", ""},
+		{"empty compact column", []string{"select", "name,,city", "-j"}, "name,city\nA,Gdansk\n", "", "empty column selector"},
+		{"overlapping column ranges", []string{"select", "#2-0,#1"}, "a,b,c\n", "", "duplicate column"},
+		{"compact alias duplicate", []string{"select", "name,#1-0", "-j", "-k"}, "name,age\nA,30\n", "", "duplicate column"},
+		{"compact drops all columns", []string{"drop", "#1-0"}, "a,b\n", "", "no columns"},
+		{"compact range exceeds width", []string{"select", "#0-999999999"}, "a,b\n", "", "out of range"},
+		{"compact name needs header", []string{"select", "name"}, "A\n", "", "requires --header"},
+		{"column syntax conflict", []string{"select", "#0", "-c", "#1"}, "a,b\n", "", "either a column list or --column"},
+		{"compact empty cell", []string{"select", "#1"}, "a,\nb,\n", "\"\"\n\"\"\n", ""},
 		{"row selector list", []string{"rows", "1,3-4,7"}, "1\n2\n3\n4\n5\n6\n7\n", "1\n3\n4\n7\n", ""},
 		{"reorder descending ranges", []string{"rows", "5,3-1"}, "1\n2\n3\n4\n5\n", "5\n3\n2\n1\n", ""},
 		{"repeat rows", []string{"rows", "2,1-2"}, "a\nb\n", "b\na\nb\n", ""},

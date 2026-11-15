@@ -3,6 +3,7 @@ package projection
 import (
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/barny-dev/ceslav/internal/columns"
 	"github.com/barny-dev/ceslav/internal/flags"
@@ -20,8 +21,8 @@ func command(drop bool) *cobra.Command {
 		name, short = "drop", "Remove CSV columns, retaining the order of the remainder"
 	}
 	cmd := &cobra.Command{
-		Use: name + " [flags]", Short: short, Args: cobra.NoArgs,
-		Long: short + ". Repeat --column for each #index or %name selector. Indices start at 0; names require --header. Duplicate selectors and zero-column output are errors.",
+		Use: name + " [columns] [flags]", Short: short, Args: cobra.MaximumNArgs(1),
+		Long: short + ". Supply one comma-separated list such as name,city or #2,#0-1. Bare names and %name require --header; #indices start at 0 and support inclusive ascending/descending ranges. Alternatively repeat --column with literal #index or %name selectors, including names containing commas. Duplicate selectors and zero-column output are errors.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return run.RunOneToOneCommand(cmd, func(cmd *cobra.Command, sink processor.Sink) (processor.Processor, error) {
 				return NewProcessor(cmd, sink, drop)
@@ -38,7 +39,7 @@ func command(drop bool) *cobra.Command {
 }
 
 type Processor struct {
-	references                       []columns.Reference
+	selectors                        []columnSelector
 	drop, expectHeader, outputHeader bool
 	width                            int
 	indices                          []int
@@ -50,55 +51,79 @@ func NewProcessor(cmd *cobra.Command, sink processor.Sink, drop bool) (processor
 	if proc.outputHeader && !proc.expectHeader {
 		return nil, errors.New("--output-header requires --header")
 	}
-	selectors, err := cmd.Flags().GetStringArray("column")
+	selectors, err := readSelectors(cmd)
 	if err != nil {
 		return nil, err
 	}
-	if len(selectors) == 0 {
-		return nil, errors.New("at least one --column is required")
-	}
-	for _, selector := range selectors {
-		ref, err := columns.Parse(selector)
-		if err != nil {
-			return nil, err
-		}
-		proc.references = append(proc.references, ref)
-	}
+	proc.selectors = selectors
 	if !proc.expectHeader {
 		// Resolve names and aliases before opening input, even when it is empty.
-		if _, err := proc.resolve(nil); err != nil {
+		if _, err := proc.resolve(nil, -1); err != nil {
 			return nil, err
 		}
 	}
 	return proc, nil
 }
 
-func (proc *Processor) resolve(header []string) ([]int, error) {
-	seen := make(map[int]columns.Reference, len(proc.references))
-	indices := make([]int, 0, len(proc.references))
-	for _, ref := range proc.references {
-		index, err := ref.Resolve(header)
+func (proc *Processor) resolve(header []string, width int) ([]int, error) {
+	type span struct {
+		first, last int
+		selector    columnSelector
+	}
+	spans := make([]span, 0, len(proc.selectors))
+	for _, selector := range proc.selectors {
+		first, err := selector.first.Resolve(header)
 		if err != nil {
 			return nil, err
 		}
-		if earlier, exists := seen[index]; exists {
-			return nil, fmt.Errorf("duplicate column %s (already specified as %s)", ref, earlier)
+		last, err := selector.last.Resolve(header)
+		if err != nil {
+			return nil, err
 		}
-		seen[index] = ref
-		indices = append(indices, index)
+		if width >= 0 {
+			for _, index := range []int{first, last} {
+				if err := columns.ValidateIndex(index, width); err != nil {
+					return nil, err
+				}
+			}
+		}
+		spans = append(spans, span{first, last, selector})
+	}
+	// Check overlaps without expanding ranges, even before input width is known.
+	ordered := append([]span(nil), spans...)
+	sort.Slice(ordered, func(i, j int) bool {
+		return min(ordered[i].first, ordered[i].last) < min(ordered[j].first, ordered[j].last)
+	})
+	for i := 1; i < len(ordered); i++ {
+		current, previous := ordered[i], ordered[i-1]
+		low := min(current.first, current.last)
+		if low <= max(previous.first, previous.last) {
+			return nil, fmt.Errorf("duplicate column #%d in selectors %s and %s", low, previous.selector, current.selector)
+		}
+	}
+	if width < 0 {
+		return nil, nil
+	}
+	var indices []int
+	for _, span := range spans {
+		step := 1
+		if span.first > span.last {
+			step = -1
+		}
+		for index := span.first; ; index += step {
+			indices = append(indices, index)
+			if index == span.last {
+				break
+			}
+		}
 	}
 	return indices, nil
 }
 
 func (proc *Processor) prepare(header []string, width int) error {
-	selected, err := proc.resolve(header)
+	selected, err := proc.resolve(header, width)
 	if err != nil {
 		return err
-	}
-	for _, index := range selected {
-		if err := columns.ValidateIndex(index, width); err != nil {
-			return err
-		}
 	}
 	indices := selected
 	if proc.drop {

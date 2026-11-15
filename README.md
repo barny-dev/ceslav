@@ -54,17 +54,30 @@ String ordering is case-sensitive Go string order, without locale collation. Num
 ## Column selection and removal
 
 ```sh
-# Select and reorder columns; repeat the flag for each selector.
-ceslav select -j -k --column '%city' --column '#0' -i input.csv
+# Select and reorder named columns with one comma-separated list.
+ceslav select 'city,name' -j -k -i input.csv
+
+# Mix names, zero-based indices and inclusive ranges.
+ceslav select 'city,#0-1' -j -k -i input.csv
+ceslav select '#2,#0-1' < input.csv
+
+# A descending range reverses the selected columns.
+ceslav select '#2-0' -j -k -i input.csv
 
 # Remove columns; keep the remainder in their original order.
-ceslav drop -j -k --column '%debug' --column '%temporary' -i input.csv
+ceslav drop 'debug,temporary' -j -k -i input.csv
 
-# A comma inside a name is literal, not a separator between selectors.
+# Use literal --column selectors for names containing commas.
 ceslav select -j -k --column '%unit,price' -i input.csv
 ```
 
-`select` and `drop` require at least one `-c` / `--column`. Both accept zero-based `#index` and exact `%name` references; names require `-j`. Duplicate references, including an index/name pair referring to the same column, are rejected. Dropping every column is an error because zero-column records cannot be represented unambiguously in CSV. An out-of-range index is checked against the header or first data record; headerless empty input has no width to validate. Input headers follow the same column transformation and are emitted only with `-k`.
+`select` and `drop` accept one comma-separated column list. Bare tokens are exact header names; `#index` selects by zero-based position. Names require `-j`; the explicit `%name` form also works. Index ranges are inclusive: `#0-2` selects columns 0, 1 and 2, and `#2-0` reverses them. The second endpoint may also include `#`, as in `#0-#2`. Selector order determines output order for `select`; `drop` retains the original order of the remainder.
+
+Whitespace around list entries and range endpoints is ignored. A bare numeric token such as `0` is a header name; use `#0` for a position. Names beginning with `#` or `%` can be prefixed with `%`, for example `%#code` or `%%rate`. Use `--` before a positional list beginning with `-`.
+
+The existing repeated `-c` / `--column` form accepts literal `#index` or `%name` references and preserves commas and whitespace in names. Use it for names that cannot be represented in the compact list. A positional list cannot be combined with `--column`.
+
+Duplicate references, overlapping ranges and index/name aliases referring to the same column are rejected. Dropping every column is an error because zero-column records cannot be represented unambiguously in CSV. Range endpoints and indices are checked against the header or first data record before ranges are expanded; headerless empty input has no width to validate. Input headers follow the same column transformation and are emitted only with `-k`.
 
 ## Row selection and removal
 

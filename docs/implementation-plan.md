@@ -28,6 +28,8 @@
 - [x] Select columns in an explicit order, covering selection and reordering.
 - [x] Drop columns while retaining the original order of the remainder.
 - [x] Apply column projection to headers consistently.
+- [x] Offer compact comma-separated column lists with bare header names, zero-based indices and inclusive ascending/descending index ranges.
+- [x] Preserve literal column selectors for names containing commas or significant whitespace.
 - [x] Keep or drop the first N data records using constant auxiliary row storage without reversal.
 - [x] Keep or drop the last N data records using a buffer bounded by N without reversal.
 - [x] Define zero, oversized and invalid counts; exclude headers from row counts.

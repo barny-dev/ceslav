@@ -32,6 +32,17 @@ func TestProjection(t *testing.T) {
 		args, header []string
 		rows, want   [][]string
 	}{
+		{"compact names", false, []string{"-j", "-k", "city,name"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"city", "name"}, {"Gdansk", "A"}}},
+		{"compact mix", false, []string{"-j", "-k", "city,#0-1"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"city", "name", "age"}, {"Gdansk", "A", "30"}}},
+		{"compact headerless range", false, []string{"#2,#0-1"}, nil, [][]string{{"a", "b", "c"}}, [][]string{{"c", "a", "b"}}},
+		{"descending range", false, []string{"-j", "-k", "#2-0"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"city", "age", "name"}, {"Gdansk", "30", "A"}}},
+		{"drop compact names", true, []string{"-j", "-k", "city,age"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"name"}, {"A"}}},
+		{"drop descending range", true, []string{"#2-1"}, nil, [][]string{{"a", "b", "c", "d"}}, [][]string{{"a", "d"}}},
+		{"compact whitespace", false, []string{" #2 , #0 - #1 "}, nil, [][]string{{"a", "b", "c"}}, [][]string{{"c", "a", "b"}}},
+		{"numeric header is a name", false, []string{"-j", "-k", "0"}, []string{"name", "0"}, [][]string{{"A", "number"}}, [][]string{{"0"}, {"number"}}},
+		{"hyphen and unicode names", false, []string{"-j", "-k", "żółć,first-name"}, []string{"first-name", "żółć"}, [][]string{{"A", "B"}}, [][]string{{"żółć", "first-name"}, {"B", "A"}}},
+		{"explicit reserved names", false, []string{"-j", "-k", "%#0,%%value"}, []string{"%value", "#0"}, [][]string{{"A", "B"}}, [][]string{{"#0", "%value"}, {"B", "A"}}},
+		{"literal whitespace and comma", false, []string{"-j", "-k", "-c", "% unit,price "}, []string{" unit,price ", "other"}, [][]string{{"10", "x"}}, [][]string{{" unit,price "}, {"10"}}},
 		{"reorder names and indices", false, []string{"-j", "-k", "-c", "%city", "-c", "#0"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"city", "name"}, {"Gdansk", "A"}}},
 		{"drop retains remaining order", true, []string{"-j", "-k", "-c", "%age"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"name", "city"}, {"A", "Gdansk"}}},
 		{"headerless selection", false, []string{"-c", "#2", "-c", "#0"}, nil, [][]string{{"a", "b", "c"}}, [][]string{{"c", "a"}}},
@@ -67,7 +78,7 @@ func TestProjection(t *testing.T) {
 }
 
 func TestProjectionConfigurationErrors(t *testing.T) {
-	for _, args := range [][]string{nil, {"-c", "bad"}, {"-c", "%name"}, {"-c", "#0", "-c", "#0"}, {"-k", "-c", "#0"}} {
+	for _, args := range [][]string{nil, {"-c", "bad"}, {"-c", "%name"}, {"-c", "#0", "-c", "#0"}, {"-k", "-c", "#0"}, {"name"}, {""}, {"name,,city"}, {"#2", "-c", "#0"}, {"#0", "#1"}, {"#0-2,#1"}, {"#2-0,#1-3"}, {"-c", "#0-2"}} {
 		cmd := SelectCmd()
 		if err := cmd.ParseFlags(args); err != nil {
 			t.Fatal(err)
@@ -85,6 +96,12 @@ func TestProjectionValidatesBeforeEmitting(t *testing.T) {
 		args, header []string
 		wantError    string
 	}{
+		{"compact unknown name", false, []string{"-j", "-k", "missing,#0"}, []string{"name"}, "not found"},
+		{"compact ambiguous name", false, []string{"-j", "-k", "name"}, []string{"name", "name"}, "ambiguous"},
+		{"compact alias overlap", false, []string{"-j", "-k", "name,#1-0"}, []string{"name", "age"}, "duplicate column"},
+		{"compact drop alias overlap", true, []string{"-j", "-k", "name,#1-0"}, []string{"name", "age", "city"}, "duplicate column"},
+		{"compact out of range", false, []string{"-j", "-k", "#0-2"}, []string{"name", "age"}, "out of range"},
+		{"compact drop all", true, []string{"-j", "-k", "#1-0"}, []string{"name", "age"}, "no columns"},
 		{"unknown name", false, []string{"-j", "-k", "-c", "%missing"}, []string{"name"}, "not found"},
 		{"ambiguous name", false, []string{"-j", "-k", "-c", "%name"}, []string{"name", "name"}, "ambiguous"},
 		{"alias duplicate", false, []string{"-j", "-k", "-c", "%name", "-c", "#0"}, []string{"name", "age"}, "duplicate column"},
