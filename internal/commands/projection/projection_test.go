@@ -32,6 +32,17 @@ func TestProjection(t *testing.T) {
 		args, header []string
 		rows, want   [][]string
 	}{
+		{"rename names", false, []string{"-j", "-k", "city=location,name=person"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"location", "person"}, {"Gdansk", "A"}}},
+		{"rename index with range", false, []string{"-j", "-k", "#2=location,#0-1"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"location", "name", "age"}, {"Gdansk", "A", "30"}}},
+		{"swap names", false, []string{"-j", "-k", "name=age,age=name"}, []string{"name", "age"}, [][]string{{"A", "30"}}, [][]string{{"age", "name"}, {"A", "30"}}},
+		{"unselected name is available", false, []string{"-j", "-k", "name=city"}, []string{"name", "city"}, [][]string{{"A", "Gdansk"}}, [][]string{{"city"}, {"A"}}},
+		{"rename duplicate headers", false, []string{"-j", "-k", "#0=left,#1=right"}, []string{"same", "same"}, [][]string{{"A", "B"}}, [][]string{{"left", "right"}, {"A", "B"}}},
+		{"unrelated existing duplicates", false, []string{"-j", "-k", "#0-1,city=town"}, []string{"same", "same", "city"}, [][]string{{"A", "B", "Gdansk"}}, [][]string{{"same", "same", "town"}, {"A", "B", "Gdansk"}}},
+		{"rename escaped comma", false, []string{"-j", "-k", `unit\,price=Price\, gross`}, []string{"unit,price", "other"}, [][]string{{"10", "x"}}, [][]string{{"Price, gross"}, {"10"}}},
+		{"rename escaped equals", false, []string{"-j", "-k", `a\=b=ratio\=value`}, []string{"a=b"}, [][]string{{"10"}}, [][]string{{"ratio=value"}, {"10"}}},
+		{"literal equals unchanged", false, []string{"-j", "-k", "-c", "%a=b"}, []string{"a=b"}, [][]string{{"10"}}, [][]string{{"a=b"}, {"10"}}},
+		{"drop escaped equals name", true, []string{"-j", "-k", `a\=b`}, []string{"a=b", "other"}, [][]string{{"10", "x"}}, [][]string{{"other"}, {"x"}}},
+		{"rename header only", false, []string{"-j", "-k", "name=Full name"}, []string{"name"}, nil, [][]string{{"Full name"}}},
 		{"compact names", false, []string{"-j", "-k", "city,name"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"city", "name"}, {"Gdansk", "A"}}},
 		{"compact mix", false, []string{"-j", "-k", "city,#0-1"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"city", "name", "age"}, {"Gdansk", "A", "30"}}},
 		{"compact headerless range", false, []string{"#2,#0-1"}, nil, [][]string{{"a", "b", "c"}}, [][]string{{"c", "a", "b"}}},
@@ -96,6 +107,9 @@ func TestProjectionValidatesBeforeEmitting(t *testing.T) {
 		args, header []string
 		wantError    string
 	}{
+		{"rename target collision", false, []string{"-j", "-k", "name=city,city"}, []string{"name", "city"}, "collides"},
+		{"two aliases collide", false, []string{"-j", "-k", "name=id,age=id"}, []string{"name", "age"}, "collides"},
+		{"renaming does not duplicate sources", false, []string{"-j", "-k", "name=one,#0=two"}, []string{"name", "age"}, "duplicate column"},
 		{"compact unknown name", false, []string{"-j", "-k", "missing,#0"}, []string{"name"}, "not found"},
 		{"compact ambiguous name", false, []string{"-j", "-k", "name"}, []string{"name", "name"}, "ambiguous"},
 		{"compact alias overlap", false, []string{"-j", "-k", "name,#1-0"}, []string{"name", "age"}, "duplicate column"},

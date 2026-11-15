@@ -22,7 +22,7 @@ func command(drop bool) *cobra.Command {
 	}
 	cmd := &cobra.Command{
 		Use: name + " [columns] [flags]", Short: short, Args: cobra.MaximumNArgs(1),
-		Long: short + ". Supply one comma-separated list such as name,city or #2,#0-1. Bare names and %name require --header; #indices start at 0 and support inclusive ascending/descending ranges. Alternatively repeat --column with literal #index or %name selectors, including names containing commas. Duplicate selectors and zero-column output are errors.",
+		Long: short + ". Supply one comma-separated list such as name,city or #2,#0-1. Bare names and %name require --header; #indices start at 0 and support inclusive ascending/descending ranges. For select, source=output-name renames one column and requires --header --output-header. Escape commas, equals signs and backslashes in names with a backslash. Alternatively repeat --column with literal #index or %name selectors. Duplicate selectors and zero-column output are errors.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return run.RunOneToOneCommand(cmd, func(cmd *cobra.Command, sink processor.Sink) (processor.Processor, error) {
 				return NewProcessor(cmd, sink, drop)
@@ -42,8 +42,13 @@ type Processor struct {
 	selectors                        []columnSelector
 	drop, expectHeader, outputHeader bool
 	width                            int
-	indices                          []int
+	projection                       []selectedColumn
 	sink                             processor.Sink
+}
+
+type selectedColumn struct {
+	index int
+	alias string
 }
 
 func NewProcessor(cmd *cobra.Command, sink processor.Sink, drop bool) (processor.Processor, error) {
@@ -56,6 +61,16 @@ func NewProcessor(cmd *cobra.Command, sink processor.Sink, drop bool) (processor
 		return nil, err
 	}
 	proc.selectors = selectors
+	for _, selector := range selectors {
+		if selector.alias != "" {
+			if drop {
+				return nil, errors.New("column renaming is supported by select only")
+			}
+			if !proc.expectHeader || !proc.outputHeader {
+				return nil, errors.New("column renaming requires --header and --output-header")
+			}
+		}
+	}
 	if !proc.expectHeader {
 		// Resolve names and aliases before opening input, even when it is empty.
 		if _, err := proc.resolve(nil, -1); err != nil {
@@ -65,7 +80,7 @@ func NewProcessor(cmd *cobra.Command, sink processor.Sink, drop bool) (processor
 	return proc, nil
 }
 
-func (proc *Processor) resolve(header []string, width int) ([]int, error) {
+func (proc *Processor) resolve(header []string, width int) ([]selectedColumn, error) {
 	type span struct {
 		first, last int
 		selector    columnSelector
@@ -104,20 +119,20 @@ func (proc *Processor) resolve(header []string, width int) ([]int, error) {
 	if width < 0 {
 		return nil, nil
 	}
-	var indices []int
+	var selected []selectedColumn
 	for _, span := range spans {
 		step := 1
 		if span.first > span.last {
 			step = -1
 		}
 		for index := span.first; ; index += step {
-			indices = append(indices, index)
+			selected = append(selected, selectedColumn{index: index, alias: span.selector.alias})
 			if index == span.last {
 				break
 			}
 		}
 	}
-	return indices, nil
+	return selected, nil
 }
 
 func (proc *Processor) prepare(header []string, width int) error {
@@ -125,32 +140,49 @@ func (proc *Processor) prepare(header []string, width int) error {
 	if err != nil {
 		return err
 	}
-	indices := selected
+	projection := selected
 	if proc.drop {
 		removed := make(map[int]bool, len(selected))
-		for _, index := range selected {
-			removed[index] = true
+		for _, column := range selected {
+			removed[column.index] = true
 		}
-		indices = make([]int, 0)
+		projection = make([]selectedColumn, 0)
 		for index := 0; index < width; index++ {
 			if !removed[index] {
-				indices = append(indices, index)
+				projection = append(projection, selectedColumn{index: index})
 			}
 		}
 	}
-	if len(indices) == 0 {
+	if len(projection) == 0 {
 		return errors.New("projection would leave no columns")
 	}
-	proc.indices, proc.width = indices, width
+	proc.projection, proc.width = projection, width
 	return nil
 }
 
 func (proc *Processor) project(record []string) []string {
-	result := make([]string, len(proc.indices))
-	for i, index := range proc.indices {
-		result[i] = record[index]
+	result := make([]string, len(proc.projection))
+	for i, column := range proc.projection {
+		result[i] = record[column.index]
 	}
 	return result
+}
+
+func (proc *Processor) projectHeader(header []string) ([]string, error) {
+	result := proc.project(header)
+	counts := make(map[string]int, len(result))
+	for i, column := range proc.projection {
+		if column.alias != "" {
+			result[i] = column.alias
+		}
+		counts[result[i]]++
+	}
+	for _, column := range proc.projection {
+		if column.alias != "" && counts[column.alias] > 1 {
+			return nil, fmt.Errorf("renamed column %q collides with another output column", column.alias)
+		}
+	}
+	return result, nil
 }
 
 func (proc *Processor) ProcessHeader(header []string) (processor.Terminate, error) {
@@ -164,7 +196,11 @@ func (proc *Processor) ProcessHeader(header []string) (processor.Terminate, erro
 		return true, err
 	}
 	if proc.outputHeader {
-		if err := proc.sink(proc.project(header)); err != nil {
+		output, err := proc.projectHeader(header)
+		if err != nil {
+			return true, err
+		}
+		if err := proc.sink(output); err != nil {
 			return true, err
 		}
 	}

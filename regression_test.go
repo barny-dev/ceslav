@@ -98,6 +98,9 @@ func TestOutputNotTruncatedOnInvalidInput(t *testing.T) {
 		{"bad column name", []string{"sort", "-j", "-b", "+s%missing"}, "city\nZurich\n"},
 		{"bad index", []string{"sort", "-b", "+s#3"}, "a\n"},
 		{"bad CSV", []string{"row-count"}, "a,b\nc\n"},
+		{"rename collision", []string{"select", "name=city,city", "-j", "-k"}, "name,city\nA,Gdansk\n"},
+		{"empty alias", []string{"select", "name=", "-j", "-k"}, "name\nA\n"},
+		{"invalid repeat count", []string{"rows", "1*0"}, "a\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

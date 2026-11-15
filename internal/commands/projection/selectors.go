@@ -13,13 +13,18 @@ import (
 // against the input width, preventing allocations based on untrusted indices.
 type columnSelector struct {
 	first, last columns.Reference
+	alias       string
 }
 
 func (selector columnSelector) String() string {
-	if selector.first == selector.last {
-		return selector.first.String()
+	label := selector.first.String()
+	if selector.first != selector.last {
+		label += "-" + selector.last.String()
 	}
-	return selector.first.String() + "-" + selector.last.String()
+	if selector.alias != "" {
+		label += "=" + selector.alias
+	}
+	return label
 }
 
 func readSelectors(cmd *cobra.Command) ([]columnSelector, error) {
@@ -36,7 +41,7 @@ func readSelectors(cmd *cobra.Command) ([]columnSelector, error) {
 			return nil, errors.New("use either a column list or --column, not both")
 		}
 		var selectors []columnSelector
-		for _, token := range strings.Split(fs.Arg(0), ",") {
+		for _, token := range splitColumnList(fs.Arg(0)) {
 			selector, err := parseCompactSelector(strings.TrimSpace(token))
 			if err != nil {
 				return nil, fmt.Errorf("column list entry %q: %w", token, err)
@@ -54,12 +59,32 @@ func readSelectors(cmd *cobra.Command) ([]columnSelector, error) {
 		if err != nil {
 			return nil, err
 		}
-		selectors = append(selectors, columnSelector{ref, ref})
+		selectors = append(selectors, columnSelector{first: ref, last: ref})
 	}
 	return selectors, nil
 }
 
 func parseCompactSelector(token string) (columnSelector, error) {
+	source, alias, renamed := splitColumnAlias(token)
+	source = decodeColumnEscapes(strings.TrimSpace(source))
+	selector, err := parseColumnSource(source)
+	if err != nil {
+		return columnSelector{}, err
+	}
+	if renamed {
+		alias = decodeColumnEscapes(strings.TrimSpace(alias))
+		if alias == "" {
+			return columnSelector{}, errors.New("output column name cannot be empty")
+		}
+		if selector.first != selector.last {
+			return columnSelector{}, errors.New("rename one column at a time; a range cannot have one output name")
+		}
+		selector.alias = alias
+	}
+	return selector, nil
+}
+
+func parseColumnSource(token string) (columnSelector, error) {
 	if token == "" {
 		return columnSelector{}, errors.New("empty column selector")
 	}
@@ -68,7 +93,7 @@ func parseCompactSelector(token string) (columnSelector, error) {
 			token = "%" + token
 		}
 		ref, err := columns.Parse(token)
-		return columnSelector{ref, ref}, err
+		return columnSelector{first: ref, last: ref}, err
 	}
 	parts := strings.Split(token[1:], "-")
 	if len(parts) > 2 {
@@ -85,5 +110,47 @@ func parseCompactSelector(token string) (columnSelector, error) {
 			return columnSelector{}, err
 		}
 	}
-	return columnSelector{first, last}, nil
+	return columnSelector{first: first, last: last}, nil
+}
+
+// Backslashes escape only delimiters and backslashes. Other sequences retain
+// their literal spelling, so names such as C:\Users keep working.
+func isColumnEscape(value string, index int) bool {
+	return value[index] == '\\' && index+1 < len(value) && strings.ContainsRune(",=\\", rune(value[index+1]))
+}
+
+func splitColumnList(value string) []string {
+	var entries []string
+	start := 0
+	for i := 0; i < len(value); i++ {
+		if isColumnEscape(value, i) {
+			i++
+		} else if value[i] == ',' {
+			entries = append(entries, value[start:i])
+			start = i + 1
+		}
+	}
+	return append(entries, value[start:])
+}
+
+func splitColumnAlias(value string) (source, alias string, renamed bool) {
+	for i := 0; i < len(value); i++ {
+		if isColumnEscape(value, i) {
+			i++
+		} else if value[i] == '=' {
+			return value[:i], value[i+1:], true
+		}
+	}
+	return value, "", false
+}
+
+func decodeColumnEscapes(value string) string {
+	var decoded strings.Builder
+	for i := 0; i < len(value); i++ {
+		if isColumnEscape(value, i) {
+			i++
+		}
+		decoded.WriteByte(value[i])
+	}
+	return decoded.String()
 }

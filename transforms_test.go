@@ -17,6 +17,27 @@ func TestTransformCommands(t *testing.T) {
 		args                   []string
 		input, want, wantError string
 	}{
+		{"repeat row", []string{"rows", "2*3,1"}, "a\nb\nc\n", "b\nb\nb\na\n", ""},
+		{"repeat range", []string{"rows", "2-3*2,1"}, "a\nb\nc\n", "b\nc\nb\nc\na\n", ""},
+		{"reverse repeated range", []string{"rows", "2-3*2,1", "--reverse"}, "a\nb\nc\n", "a\nc\nb\nc\nb\n", ""},
+		{"drop repeated rows", []string{"rows", "2*3", "--drop"}, "a\nb\nc\n", "a\nc\n", ""},
+		{"repeat preserves header", []string{"rows", "2*3", "-j", "-k"}, "id\na\nb\n", "id\nb\nb\nb\n", ""},
+		{"repeat multiline record", []string{"rows", "1*2"}, "\"two\nlines\"\nother\n", "\"two\nlines\"\n\"two\nlines\"\n", ""},
+		{"repeat missing rows", []string{"rows", "9*9223372036854775807,1"}, "a\nb\n", "a\n", ""},
+		{"repeat zero rejected", []string{"rows", "1*0"}, "a\n", "", "repetition count"},
+		{"repeat overflow rejected", []string{"rows", "1*9223372036854775808"}, "a\n", "", "repetition count"},
+		{"rename output columns", []string{"select", "city=location,name=person", "-j", "-k"}, "name,age,city\nA,30,Gdansk\n", "location,person\nGdansk,A\n", ""},
+		{"rename indexed column", []string{"select", "#0=person,#1-2", "-j", "-k"}, "name,age,city\nA,30,Gdansk\n", "person,age,city\nA,30,Gdansk\n", ""},
+		{"swap output names", []string{"select", "name=city,city=name", "-j", "-k"}, "name,city\nA,Gdansk\n", "city,name\nA,Gdansk\n", ""},
+		{"rename quoted names", []string{"select", `unit\,price=Price\, gross`, "-j", "-k"}, "\"unit,price\"\n10\n", "\"Price, gross\"\n10\n", ""},
+		{"rename escaped equals", []string{"select", `a\=b=ratio\=value`, "-j", "-k"}, "a=b\n10\n", "ratio=value\n10\n", ""},
+		{"literal equals name", []string{"select", "-c", "%a=b", "-j", "-k"}, "a=b\n10\n", "a=b\n10\n", ""},
+		{"rename collision", []string{"select", "name=city,city", "-j", "-k"}, "name,city\nA,Gdansk\n", "", "collides"},
+		{"rename requires output header", []string{"select", "name=person", "-j"}, "name\nA\n", "", "requires --header and --output-header"},
+		{"rename requires input header", []string{"select", "#0=person"}, "A\n", "", "requires --header and --output-header"},
+		{"empty renamed column", []string{"select", "name=", "-j", "-k"}, "name\nA\n", "", "cannot be empty"},
+		{"range cannot be renamed", []string{"select", "#0-1=pair", "-j", "-k"}, "name,age\nA,30\n", "", "rename one column"},
+		{"drop cannot rename", []string{"drop", "name=person", "-j", "-k"}, "name,age\nA,30\n", "", "select only"},
 		{"compact column names", []string{"select", "name,city", "-j", "-k"}, "name,age,city\nA,30,Gdansk\n", "name,city\nA,Gdansk\n", ""},
 		{"compact mixed selectors", []string{"select", "city,#0-1", "-j", "-k"}, "name,age,city\nA,30,Gdansk\n", "city,name,age\nGdansk,A,30\n", ""},
 		{"compact headerless selectors", []string{"select", "#2,#0-1"}, "a,b,c\n", "c,a,b\n", ""},
@@ -121,6 +142,8 @@ func TestPrefixAndZeroSelectionDoNotWaitForInputEOF(t *testing.T) {
 		{"reversed selectors", []string{"rows", "3,1", "--reverse"}, "one\ntwo\nthree\n", "one\nthree\n"},
 		{"reversed prefix", []string{"rows", "--first", "2", "--reverse"}, "one\ntwo\n", "two\none\n"},
 		{"reversed zero", []string{"rows", "--first", "0", "--reverse"}, "", ""},
+		{"repeated row", []string{"rows", "2*3"}, "one\ntwo\n", "two\ntwo\ntwo\n"},
+		{"repeated range", []string{"rows", "1-2*2", "--reverse"}, "one\ntwo\n", "two\none\ntwo\none\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

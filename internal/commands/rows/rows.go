@@ -12,7 +12,7 @@ import (
 func Cmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "rows [selectors] [flags]", Short: "Select, drop, reorder or reverse CSV data records", Args: cobra.MaximumNArgs(1),
-		Long: "Choose row selectors (for example 1,3-4,7), --first N or --last N. Row numbers start at 1 and exclude the header. Ranges are inclusive and may descend; selector order determines output order, including repeats. Add --drop to remove matching rows, or --reverse to reverse the result. Use --reverse alone to reverse all data records.",
+		Long: "Choose row selectors (for example 1,3-4,7), --first N or --last N. Row numbers start at 1 and exclude the header. Ranges are inclusive and may descend. Append *COUNT to repeat a row or entire range, for example 3*4 or 2-4*2; COUNT is a positive integer giving the total number of copies. Add --drop to remove matching rows, or --reverse to reverse the result. Use --reverse alone to reverse all data records.",
 		RunE: func(cmd *cobra.Command, _ []string) error { return run.RunOneToOneCommand(cmd, NewProcessor) },
 	}
 	fs := cmd.Flags()

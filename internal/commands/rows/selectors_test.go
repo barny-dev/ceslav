@@ -11,6 +11,10 @@ func TestSelectorsMatchReferenceOrdering(t *testing.T) {
 		spec     string
 		expanded []int64
 	}{
+		{"2*3,1", []int64{2, 2, 2, 1}},
+		{"2-4*2,1*2", []int64{2, 3, 4, 2, 3, 4, 1, 1}},
+		{"4-2*2,7*1", []int64{4, 3, 2, 4, 3, 2, 7}},
+		{" 2 - 4 * 2 ", []int64{2, 3, 4, 2, 3, 4}},
 		{"1,3-4,7", []int64{1, 3, 4, 7}},
 		{"7,4-3,1", []int64{7, 4, 3, 1}},
 		{"3-1,2-4", []int64{3, 2, 1, 2, 3, 4}},
@@ -56,7 +60,7 @@ func TestSelectorsMatchReferenceOrdering(t *testing.T) {
 }
 
 func TestSelectorSyntaxErrors(t *testing.T) {
-	for _, spec := range []string{"", " ", "0", "-1", "+1", "1,", ",1", "1,,2", "1-", "-2", "1--2", "1-2-3", "1-0", "a", "1.5", "1 2", "9223372036854775808", "1-9223372036854775808"} {
+	for _, spec := range []string{"", " ", "0", "-1", "+1", "1,", ",1", "1,,2", "1-", "-2", "1--2", "1-2-3", "1-0", "a", "1.5", "1 2", "9223372036854775808", "1-9223372036854775808", "*2", "1*", "1*0", "1*-2", "1*+2", "1*1.5", "1*2*3", "1**3", "1*x", "1*9223372036854775808"} {
 		if _, err := parseRowSelection(spec); err == nil {
 			t.Errorf("accepted %q", spec)
 		}
@@ -68,6 +72,8 @@ func TestHugeRangesAreClippedBeforeIteration(t *testing.T) {
 		spec string
 		want []int64
 	}{
+		{"1-9223372036854775807*2", []int64{1, 2, 3, 1, 2, 3}},
+		{"9223372036854775807*9223372036854775807", nil},
 		{"1-9223372036854775807", []int64{1, 2, 3}},
 		{"9223372036854775807-1", []int64{3, 2, 1}},
 		{"9223372036854775807", nil},
@@ -99,6 +105,30 @@ func TestHugeRangesAreClippedBeforeIteration(t *testing.T) {
 		return nil
 	}); err != nil || visits != 1 || !selection.contains(limit) {
 		t.Fatalf("integer limit: %d visits, error %v", visits, err)
+	}
+}
+
+func TestHugeRepeatCountStopsWithoutExpansion(t *testing.T) {
+	selection, err := parseRowSelection("1*9223372036854775807")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selection.ranges) != 1 || selection.ranges[0].copies != 9223372036854775807 {
+		t.Fatal("repetition was not stored compactly")
+	}
+	failure := errors.New("stop after three copies")
+	for _, reverse := range []bool{false, true} {
+		calls := 0
+		err := selection.forEach(1, reverse, func(int64) error {
+			calls++
+			if calls == 3 {
+				return failure
+			}
+			return nil
+		})
+		if !errors.Is(err, failure) || calls != 3 {
+			t.Fatalf("calls %d, error %v", calls, err)
+		}
 	}
 }
 

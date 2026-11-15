@@ -64,6 +64,13 @@ ceslav select '#2,#0-1' < input.csv
 # A descending range reverses the selected columns.
 ceslav select '#2-0' -j -k -i input.csv
 
+# Rename individual output columns by name or index.
+ceslav select 'name=person,city=location' -j -k -i input.csv
+ceslav select '#0=person,#2=location' -j -k -i input.csv
+
+# Escape a comma in a source name when renaming it.
+ceslav select 'unit\,price=Unit price' -j -k -i input.csv
+
 # Remove columns; keep the remainder in their original order.
 ceslav drop 'debug,temporary' -j -k -i input.csv
 
@@ -75,7 +82,11 @@ ceslav select -j -k --column '%unit,price' -i input.csv
 
 Whitespace around list entries and range endpoints is ignored. A bare numeric token such as `0` is a header name; use `#0` for a position. Names beginning with `#` or `%` can be prefixed with `%`, for example `%#code` or `%%rate`. Use `--` before a positional list beginning with `-`.
 
-The existing repeated `-c` / `--column` form accepts literal `#index` or `%name` references and preserves commas and whitespace in names. Use it for names that cannot be represented in the compact list. A positional list cannot be combined with `--column`.
+For `select`, append `=NAME` to rename an individual output column. Renaming changes only the emitted header and requires `-j -k`; all source references still resolve against the original input header. New names must be nonempty and must not collide with another final output name. Swapping names is allowed, as is reusing the name of an unselected column. A range containing multiple columns cannot have a single new name; list renamed columns individually. `drop` does not accept renaming.
+
+In a compact list, escape literal commas, equals signs and backslashes as `\,`, `\=` and `\\` in source or output names. For example, `a\=b=ratio` selects input column `a=b` and names it `ratio`. Backslashes before other characters remain literal. Names are trimmed around the rename delimiter, like list entries.
+
+The existing repeated `-c` / `--column` form accepts literal `#index` or `%name` references and preserves commas, equals signs, backslashes and whitespace in names without interpreting escapes or renaming. Use it for names that cannot be represented in the compact list. A positional list cannot be combined with `--column`.
 
 Duplicate references, overlapping ranges and index/name aliases referring to the same column are rejected. Dropping every column is an error because zero-column records cannot be represented unambiguously in CSV. Range endpoints and indices are checked against the header or first data record before ranges are expanded; headerless empty input has no width to validate. Input headers follow the same column transformation and are emitted only with `-k`.
 
@@ -93,6 +104,10 @@ ceslav rows '1,3-4,7' -j -k -i input.csv
 # Reorder rows, including a descending inclusive range.
 ceslav rows '7,4-3,1' -j -k -i input.csv
 
+# Emit row 3 four times; emit rows 2, 3 and 4 twice as a block.
+ceslav rows '3*4' -j -k -i input.csv
+ceslav rows '2-4*2' -j -k -i input.csv
+
 # Remove listed rows; reverse the remaining rows.
 ceslav rows '1,3-4,7' --drop --reverse -j -k -i input.csv
 
@@ -104,6 +119,8 @@ ceslav rows --first 10 --reverse -j -k -i input.csv
 Choose one selector list, `--first N` or `--last N`. N must be nonnegative and fit the platform's integer range. Selector lists use **one-based data-row numbers** and inclusive ranges, separated by commas. Row numbers must be positive decimal integers fitting a signed 64-bit integer; whitespace around numbers is allowed. Headers are excluded from numbering and counts; `-k` requires `-j` for all transformation commands.
 
 Selector order determines output order. Descending ranges such as `4-2` select rows 4, 3 and 2. Repeated or overlapping selectors repeat those rows in the output; `--drop` removes their union and retains the order of remaining rows. Unavailable row numbers are ignored, and ranges are clipped to available input. An empty selector, row 0, a negative number, an open-ended range or malformed syntax is an error.
+
+Append `*COUNT` to a row or range selector for repetition. COUNT is a positive signed 64-bit decimal integer giving the total number of copies: `3*4` emits row 3 four times, while `2-4*2` emits `2,3,4,2,3,4`. A count of zero is an error. Repetition combines with other selectors and `--reverse`; with `--drop`, only membership matters, so a multiplier does not change which rows are removed. Unavailable rows are omitted before repetition. Copy counts are stored compactly and rows are retained once, so a large multiplier increases output size without allocating a matching number of buffered rows.
 
 `--reverse` reverses the result of selection or dropping; without a selector list or first/last option, it reverses all data rows. The header remains first. `--drop` requires an explicit selection. A selector list cannot be combined with `--first` or `--last`.
 

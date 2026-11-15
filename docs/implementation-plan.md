@@ -30,11 +30,13 @@
 - [x] Apply column projection to headers consistently.
 - [x] Offer compact comma-separated column lists with bare header names, zero-based indices and inclusive ascending/descending index ranges.
 - [x] Preserve literal column selectors for names containing commas or significant whitespace.
+- [x] Rename individual selected output columns and validate new names against final output headers.
 - [x] Keep or drop the first N data records using constant auxiliary row storage without reversal.
 - [x] Keep or drop the last N data records using a buffer bounded by N without reversal.
 - [x] Define zero, oversized and invalid counts; exclude headers from row counts.
 - [x] Accept comma-separated one-based row selectors and inclusive ascending/descending ranges.
 - [x] Preserve selector order and repeated rows; drop the union of matching rows and ignore unavailable rows.
+- [x] Repeat row or range selectors with compact positive copy counts.
 - [x] Reverse all, selected or remaining data rows while keeping the header first.
 
 ## 3. Typed values and temporal conversions

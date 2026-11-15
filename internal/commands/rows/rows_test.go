@@ -148,6 +148,11 @@ func TestRowSelectorsAndReverse(t *testing.T) {
 		args       []string
 	}{
 		{"selector list", "1,3,4,7", []string{"1,3-4,7"}},
+		{"repeat a row", "2,2,2,1", []string{"2*3,1"}},
+		{"repeat a range", "2,3,4,2,3,4,1", []string{"2-4*2,1"}},
+		{"reverse repeated range", "1,4,3,2,4,3,2", []string{"2-4*2,1", "--reverse"}},
+		{"drop repeated selectors", "1,3,6,7", []string{"2*3,4-5*2", "--drop"}},
+		{"missing repeated row", "1,1", []string{"8*5,1*2"}},
 		{"descending range", "7,4,3,1", []string{"7,4-3,1"}},
 		{"repeated rows", "3,1,3,4", []string{"3,1,3-4"}},
 		{"reverse selectors", "1,3,4,7", []string{"7,4-3,1", "--reverse"}},
@@ -179,6 +184,32 @@ func TestRowSelectorsAndReverse(t *testing.T) {
 				t.Fatalf("got %v, want %s", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRepeatedRowsAreBufferedOnceAndKeepOneHeader(t *testing.T) {
+	var got []string
+	proc := newRows(t, []string{"2*4", "-j", "-k"}, func(row []string) error { got = append(got, row[0]); return nil })
+	if _, err := proc.ProcessHeader([]string{"header"}); err != nil {
+		t.Fatal(err)
+	}
+	row := []string{"one"}
+	if stop, err := proc.ProcessRow(row); stop || err != nil {
+		t.Fatalf("first row: stop %v, error %v", stop, err)
+	}
+	row[0] = "two"
+	if stop, err := proc.ProcessRow(row); !stop || err != nil {
+		t.Fatalf("second row: stop %v, error %v", stop, err)
+	}
+	if len(proc.selectedRows) != 1 {
+		t.Fatal("repetition buffered more than one copy of the input row")
+	}
+	row[0] = "overwritten"
+	if err := proc.Complete(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "header,two,two,two,two" {
+		t.Fatalf("got %v", got)
 	}
 }
 

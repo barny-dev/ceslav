@@ -12,31 +12,26 @@ type rowRange struct {
 	first, last int64
 }
 
+type rowSelector struct {
+	rowRange
+	copies int64
+}
+
 type rowSelection struct {
-	ranges    []rowRange // Original order and direction, including repeated rows.
-	intervals []rowRange // Sorted, disjoint ascending intervals for membership.
+	ranges    []rowSelector // Original order and direction, with compact repetition counts.
+	intervals []rowRange    // Sorted, disjoint ascending intervals for membership.
 	last      int64
 }
 
 func parseRowSelection(spec string) (*rowSelection, error) {
 	selection := &rowSelection{}
 	for _, token := range strings.Split(spec, ",") {
-		parts := strings.Split(token, "-")
-		if len(parts) > 2 {
-			return nil, fmt.Errorf("invalid row selector %q: expected a number or inclusive range", token)
-		}
-		first, err := parseRowNumber(parts[0])
+		selector, err := parseRowSelector(token)
 		if err != nil {
 			return nil, fmt.Errorf("invalid row selector %q: %w", token, err)
 		}
-		last := first
-		if len(parts) == 2 {
-			last, err = parseRowNumber(parts[1])
-			if err != nil {
-				return nil, fmt.Errorf("invalid row selector %q: %w", token, err)
-			}
-		}
-		selection.ranges = append(selection.ranges, rowRange{first, last})
+		selection.ranges = append(selection.ranges, selector)
+		first, last := selector.first, selector.last
 		if first > last {
 			first, last = last, first
 		}
@@ -61,16 +56,47 @@ func parseRowSelection(spec string) (*rowSelection, error) {
 	return selection, nil
 }
 
-func parseRowNumber(value string) (int64, error) {
+func parseRowSelector(token string) (rowSelector, error) {
+	repetition := strings.Split(token, "*")
+	if len(repetition) > 2 {
+		return rowSelector{}, errors.New("expected a row or range optionally followed by *COUNT")
+	}
+	copies := int64(1)
+	if len(repetition) == 2 {
+		var err error
+		copies, err = parsePositiveDecimal(repetition[1])
+		if err != nil {
+			return rowSelector{}, fmt.Errorf("repetition count: %w", err)
+		}
+	}
+	parts := strings.Split(repetition[0], "-")
+	if len(parts) > 2 {
+		return rowSelector{}, errors.New("expected a number or inclusive range")
+	}
+	first, err := parsePositiveDecimal(parts[0])
+	if err != nil {
+		return rowSelector{}, fmt.Errorf("row number: %w", err)
+	}
+	last := first
+	if len(parts) == 2 {
+		last, err = parsePositiveDecimal(parts[1])
+		if err != nil {
+			return rowSelector{}, fmt.Errorf("row number: %w", err)
+		}
+	}
+	return rowSelector{rowRange{first, last}, copies}, nil
+}
+
+func parsePositiveDecimal(value string) (int64, error) {
 	value = strings.TrimSpace(value)
 	for _, digit := range value {
 		if digit < '0' || digit > '9' {
-			return 0, errors.New("row numbers must be positive 64-bit decimal integers")
+			return 0, errors.New("expected a positive 64-bit decimal integer")
 		}
 	}
 	number, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || number <= 0 {
-		return 0, errors.New("row numbers must be positive 64-bit decimal integers")
+		return 0, errors.New("expected a positive 64-bit decimal integer")
 	}
 	return number, nil
 }
@@ -104,13 +130,15 @@ func (selection *rowSelection) forEach(total int64, reverse bool, visit func(int
 			}
 			step = -1
 		}
-		for index := span.first; ; index += step {
-			if err := visit(index); err != nil {
-				return err
-			}
-			// Break before incrementing to avoid overflow at the integer limit.
-			if index == span.last {
-				break
+		for copy := int64(0); copy < span.copies; copy++ {
+			for index := span.first; ; index += step {
+				if err := visit(index); err != nil {
+					return err
+				}
+				// Break before incrementing to avoid overflow at the integer limit.
+				if index == span.last {
+					break
+				}
 			}
 		}
 	}
