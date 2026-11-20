@@ -1,0 +1,174 @@
+package projection
+
+import (
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/barny-dev/ceslav/internal/utilities/processor"
+)
+
+func newProjection(t *testing.T, drop bool, args []string, sink processor.Sink) processor.Processor {
+	t.Helper()
+	cmd := SelectCmd()
+	if drop {
+		cmd = DropCmd()
+	}
+	if err := cmd.ParseFlags(args); err != nil {
+		t.Fatal(err)
+	}
+	proc, err := NewProcessor(cmd, sink, drop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return proc
+}
+
+func TestProjection(t *testing.T) {
+	cases := []struct {
+		name         string
+		drop         bool
+		args, header []string
+		rows, want   [][]string
+	}{
+		{"rename names", false, []string{"-j", "-k", "city=location,name=person"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"location", "person"}, {"Gdansk", "A"}}},
+		{"rename copies of one source", false, []string{"-j", "name=one,#0=two"}, []string{"name", "age"}, [][]string{{"A", "30"}}, [][]string{{"one", "two"}, {"A", "A"}}},
+		{"rename a copy of a column in a range", false, []string{"-j", "#0-1,name=person"}, []string{"name", "age"}, [][]string{{"A", "30"}}, [][]string{{"name", "age", "person"}, {"A", "30", "A"}}},
+		{"rename index with range", false, []string{"-j", "-k", "#2=location,#0-1"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"location", "name", "age"}, {"Gdansk", "A", "30"}}},
+		{"swap names", false, []string{"-j", "-k", "name=age,age=name"}, []string{"name", "age"}, [][]string{{"A", "30"}}, [][]string{{"age", "name"}, {"A", "30"}}},
+		{"unselected name is available", false, []string{"-j", "-k", "name=city"}, []string{"name", "city"}, [][]string{{"A", "Gdansk"}}, [][]string{{"city"}, {"A"}}},
+		{"rename duplicate headers", false, []string{"-j", "-k", "#0=left,#1=right"}, []string{"same", "same"}, [][]string{{"A", "B"}}, [][]string{{"left", "right"}, {"A", "B"}}},
+		{"unrelated existing duplicates", false, []string{"-j", "-k", "#0-1,city=town"}, []string{"same", "same", "city"}, [][]string{{"A", "B", "Gdansk"}}, [][]string{{"same", "same", "town"}, {"A", "B", "Gdansk"}}},
+		{"rename escaped comma", false, []string{"-j", "-k", `unit\,price=Price\, gross`}, []string{"unit,price", "other"}, [][]string{{"10", "x"}}, [][]string{{"Price, gross"}, {"10"}}},
+		{"rename escaped equals", false, []string{"-j", "-k", `a\=b=ratio\=value`}, []string{"a=b"}, [][]string{{"10"}}, [][]string{{"ratio=value"}, {"10"}}},
+		{"literal equals unchanged", false, []string{"-j", "-k", "-c", "%a=b"}, []string{"a=b"}, [][]string{{"10"}}, [][]string{{"a=b"}, {"10"}}},
+		{"drop escaped equals name", true, []string{"-j", "-k", `a\=b`}, []string{"a=b", "other"}, [][]string{{"10", "x"}}, [][]string{{"other"}, {"x"}}},
+		{"rename header only", false, []string{"-j", "-k", "name=Full name"}, []string{"name"}, nil, [][]string{{"Full name"}}},
+		{"compact names", false, []string{"-j", "-k", "city,name"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"city", "name"}, {"Gdansk", "A"}}},
+		{"compact mix", false, []string{"-j", "-k", "city,#0-1"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"city", "name", "age"}, {"Gdansk", "A", "30"}}},
+		{"compact headerless range", false, []string{"#2,#0-1"}, nil, [][]string{{"a", "b", "c"}}, [][]string{{"c", "a", "b"}}},
+		{"descending range", false, []string{"-j", "-k", "#2-0"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"city", "age", "name"}, {"Gdansk", "30", "A"}}},
+		{"drop compact names", true, []string{"-j", "-k", "city,age"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"name"}, {"A"}}},
+		{"drop descending range", true, []string{"#2-1"}, nil, [][]string{{"a", "b", "c", "d"}}, [][]string{{"a", "d"}}},
+		{"drop overlapping ranges", true, []string{"#6-4,#1-3,#3-1,#5-2"}, nil, [][]string{{"a", "b", "c", "d", "e", "f", "g", "h"}}, [][]string{{"a", "h"}}},
+		{"compact whitespace", false, []string{" #2 , #0 - #1 "}, nil, [][]string{{"a", "b", "c"}}, [][]string{{"c", "a", "b"}}},
+		{"numeric header is a name", false, []string{"-j", "-k", "0"}, []string{"name", "0"}, [][]string{{"A", "number"}}, [][]string{{"0"}, {"number"}}},
+		{"hyphen and unicode names", false, []string{"-j", "-k", "żółć,first-name"}, []string{"first-name", "żółć"}, [][]string{{"A", "B"}}, [][]string{{"żółć", "first-name"}, {"B", "A"}}},
+		{"explicit reserved names", false, []string{"-j", "-k", "%#0,%%value"}, []string{"%value", "#0"}, [][]string{{"A", "B"}}, [][]string{{"#0", "%value"}, {"B", "A"}}},
+		{"literal whitespace and comma", false, []string{"-j", "-k", "-c", "% unit,price "}, []string{" unit,price ", "other"}, [][]string{{"10", "x"}}, [][]string{{" unit,price "}, {"10"}}},
+		{"reorder names and indices", false, []string{"-j", "-k", "-c", "%city", "-c", "#0"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"city", "name"}, {"Gdansk", "A"}}},
+		{"drop retains remaining order", true, []string{"-j", "-k", "-c", "%age"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"name", "city"}, {"A", "Gdansk"}}},
+		{"headerless selection", false, []string{"-c", "#2", "-c", "#0"}, nil, [][]string{{"a", "b", "c"}}, [][]string{{"c", "a"}}},
+		{"headerless drop", true, []string{"-c", "#1"}, nil, [][]string{{"a", "b", "c"}}, [][]string{{"a", "c"}}},
+		{"comma in header name", false, []string{"-j", "-k", "-c", "%unit,price"}, []string{"unit,price", "other"}, [][]string{{"10", "x"}}, [][]string{{"unit,price"}, {"10"}}},
+		{"duplicate header by index", false, []string{"-j", "-k", "-c", "#1"}, []string{"same", "same"}, [][]string{{"a", "b"}}, [][]string{{"same"}, {"b"}}},
+		{"header omitted", false, []string{"-j", "-c", "%name"}, []string{"name", "age"}, [][]string{{"A", "30"}}, [][]string{{"A"}}},
+		{"header only", false, []string{"-j", "-k", "-c", "#1"}, []string{"name", "age"}, nil, [][]string{{"age"}}},
+		{"empty input", false, []string{"-c", "#0"}, nil, nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got [][]string
+			proc := newProjection(t, tc.drop, tc.args, func(row []string) error { got = append(got, append([]string(nil), row...)); return nil })
+			if tc.header != nil {
+				if stop, err := proc.ProcessHeader(tc.header); err != nil || stop {
+					t.Fatalf("header: stop %v, error %v", stop, err)
+				}
+			}
+			for _, row := range tc.rows {
+				if stop, err := proc.ProcessRow(row); err != nil || stop {
+					t.Fatalf("row: stop %v, error %v", stop, err)
+				}
+			}
+			if err := proc.Complete(); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProjectionConfigurationErrors(t *testing.T) {
+	for _, args := range [][]string{nil, {"-c", "bad"}, {"-c", "%name"}, {"-c", "#0", "-c", "#0"}, {"-k", "-c", "#0"}, {"name"}, {""}, {"name,,city"}, {"#2", "-c", "#0"}, {"#0", "#1"}, {"#0-2,#1"}, {"#2-0,#1-3"}, {"-c", "#0-2"}} {
+		cmd := SelectCmd()
+		if err := cmd.ParseFlags(args); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := NewProcessor(cmd, func([]string) error { return nil }, false); err == nil {
+			t.Fatalf("accepted %v", args)
+		}
+	}
+}
+
+func TestProjectionValidatesBeforeEmitting(t *testing.T) {
+	cases := []struct {
+		name         string
+		drop         bool
+		args, header []string
+		wantError    string
+	}{
+		{"rename target collision", false, []string{"-j", "-k", "name=city,city"}, []string{"name", "city"}, "collides"},
+		{"two aliases collide", false, []string{"-j", "-k", "name=id,age=id"}, []string{"name", "age"}, "collides"},
+		{"aliases on one source must differ", false, []string{"-j", "name=id,#0=id"}, []string{"name", "age"}, "collides"},
+		{"compact unknown name", false, []string{"-j", "-k", "missing,#0"}, []string{"name"}, "not found"},
+		{"compact ambiguous name", false, []string{"-j", "-k", "name"}, []string{"name", "name"}, "ambiguous"},
+		{"compact alias overlap", false, []string{"-j", "-k", "name,#1-0"}, []string{"name", "age"}, "duplicate column"},
+		{"compact out of range", false, []string{"-j", "-k", "#0-2"}, []string{"name", "age"}, "out of range"},
+		{"compact drop all", true, []string{"-j", "-k", "#1-0"}, []string{"name", "age"}, "no columns"},
+		{"unknown name", false, []string{"-j", "-k", "-c", "%missing"}, []string{"name"}, "not found"},
+		{"ambiguous name", false, []string{"-j", "-k", "-c", "%name"}, []string{"name", "name"}, "ambiguous"},
+		{"alias duplicate", false, []string{"-j", "-k", "-c", "%name", "-c", "#0"}, []string{"name", "age"}, "duplicate column"},
+		{"header index", false, []string{"-j", "-k", "-c", "#2"}, []string{"name"}, "out of range"},
+		{"drop all", true, []string{"-j", "-k", "-c", "#0"}, []string{"name"}, "no columns"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			emitted := false
+			proc := newProjection(t, tc.drop, tc.args, func([]string) error { emitted = true; return nil })
+			stop, err := proc.ProcessHeader(tc.header)
+			if !stop || err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("stop %v, error %v", stop, err)
+			}
+			if emitted {
+				t.Fatal("emitted invalid projection")
+			}
+		})
+	}
+	for _, drop := range []bool{false, true} {
+		emitted := false
+		proc := newProjection(t, drop, []string{"-c", "#2"}, func([]string) error { emitted = true; return nil })
+		stop, err := proc.ProcessRow([]string{"one"})
+		if !stop || err == nil || emitted {
+			t.Fatalf("invalid singleton: stop %v, error %v, emitted %v", stop, err, emitted)
+		}
+	}
+}
+
+func TestProjectionRejectsChangedWidth(t *testing.T) {
+	calls := 0
+	proc := newProjection(t, false, []string{"-c", "#0"}, func([]string) error { calls++; return nil })
+	if _, err := proc.ProcessRow([]string{"a", "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if stop, err := proc.ProcessRow([]string{"c"}); err == nil || !stop {
+		t.Fatal("accepted changed width")
+	}
+	if calls != 1 {
+		t.Fatal("emitted malformed row")
+	}
+}
+
+func TestProjectionPropagatesSinkErrors(t *testing.T) {
+	failure := errors.New("sink failed")
+	headerProc := newProjection(t, false, []string{"-j", "-k", "-c", "#0"}, func([]string) error { return failure })
+	if stop, err := headerProc.ProcessHeader([]string{"name"}); !stop || !errors.Is(err, failure) {
+		t.Fatalf("header: %v, %v", stop, err)
+	}
+	rowProc := newProjection(t, false, []string{"-c", "#0"}, func([]string) error { return failure })
+	if stop, err := rowProc.ProcessRow([]string{"value"}); !stop || !errors.Is(err, failure) {
+		t.Fatalf("row: %v, %v", stop, err)
+	}
+}

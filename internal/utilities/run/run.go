@@ -38,7 +38,7 @@ func RunOneToOneCommand(cmd *cobra.Command, initialize processor.Initializer) (o
 		if err := openOutput(); err != nil {
 			return err
 		}
-		if err := outputCSV.Write(record); err != nil {
+		if err := writeRecord(outputCSV, outputFile, record); err != nil {
 			return fmt.Errorf("write output: %w", err)
 		}
 		return nil
@@ -71,6 +71,24 @@ func RunOneToOneCommand(cmd *cobra.Command, initialize processor.Initializer) (o
 		return err
 	}
 	return openOutput()
+}
+
+// csv.Writer emits a blank line for a single empty field, which csv.Reader
+// skips. Quote that record explicitly, flushing first to preserve record order.
+func writeRecord(writer *csv.Writer, output io.Writer, record []string) error {
+	if len(record) != 1 || record[0] != "" {
+		return writer.Write(record)
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return err
+	}
+	line := "\"\"\n"
+	if writer.UseCRLF {
+		line = "\"\"\r\n"
+	}
+	_, err := io.WriteString(output, line)
+	return err
 }
 
 // Always attempt both flush and close; neither failure may hide the other.
