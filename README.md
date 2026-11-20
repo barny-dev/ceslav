@@ -54,86 +54,47 @@ String ordering is case-sensitive Go string order, without locale collation. Num
 ## Column selection and removal
 
 ```sh
-# Select and reorder named columns with one comma-separated list.
-ceslav select 'city,name' -j -k -i input.csv
+# Reorder named columns, keeping the header.
+ceslav select 'city,name' -jk -i input.csv
 
-# Mix names, zero-based indices and inclusive ranges.
-ceslav select 'city,#0-1' -j -k -i input.csv
-ceslav select '#2,#0-1' < input.csv
+# Select by position from headerless input.
+ceslav select '#2,#0-1' -i input.csv
 
-# A descending range reverses the selected columns.
-ceslav select '#2-0' -j -k -i input.csv
+# Keep a copy of id under a second name.
+ceslav select 'id,id=original_id,city' -j -i input.csv
 
-# Rename individual output columns by name or index.
-ceslav select 'name=person,city=location' -j -k -i input.csv
-ceslav select '#0=person,#2=location' -j -k -i input.csv
-
-# Escape a comma in a source name when renaming it.
-ceslav select 'unit\,price=Unit price' -j -k -i input.csv
-
-# Remove columns; keep the remainder in their original order.
-ceslav drop 'debug,temporary' -j -k -i input.csv
-
-# Use literal --column selectors for names containing commas.
-ceslav select -j -k --column '%unit,price' -i input.csv
+ceslav drop 'debug,temporary' -jk -i input.csv
 ```
 
-`select` and `drop` accept one comma-separated column list. Bare tokens are exact header names; `#index` selects by zero-based position. Names require `-j`; the explicit `%name` form also works. Index ranges are inclusive: `#0-2` selects columns 0, 1 and 2, and `#2-0` reverses them. The second endpoint may also include `#`, as in `#0-#2`. Selector order determines output order for `select`; `drop` retains the original order of the remainder.
+**Rows start at 1, columns start at `#0`.** A comma-separated column list accepts names, positions and inclusive ranges such as `#0-2` or `#2-0`. Names require `-j`. `select` follows list order. `drop` keeps the remaining columns in input order, removes repeated or overlapping matches once, and requires at least one column to remain.
 
-Whitespace around list entries and range endpoints is ignored. A bare numeric token such as `0` is a header name; use `#0` for a position. Names beginning with `#` or `%` can be prefixed with `%`, for example `%#code` or `%%rate`. Use `--` before a positional list beginning with `-`.
+Use `source=alias` with `select -j` to rename an output column and print the header. Sources always refer to the input header. You can select a source more than once by giving each copy a distinct output name. An alias must be nonempty and unique in the output header. An alias applies to one column.
 
-For `select`, append `=NAME` to rename an individual output column. Renaming changes only the emitted header and requires `-j -k`; all source references still resolve against the original input header. New names must be nonempty and must not collide with another final output name. Swapping names is allowed, as is reusing the name of an unselected column. A range containing multiple columns cannot have a single new name; list renamed columns individually. `drop` does not accept renaming.
-
-In a compact list, escape literal commas, equals signs and backslashes as `\,`, `\=` and `\\` in source or output names. For example, `a\=b=ratio` selects input column `a=b` and names it `ratio`. Backslashes before other characters remain literal. Names are trimmed around the rename delimiter, like list entries.
-
-The existing repeated `-c` / `--column` form accepts literal `#index` or `%name` references and preserves commas, equals signs, backslashes and whitespace in names without interpreting escapes or renaming. Use it for names that cannot be represented in the compact list. A positional list cannot be combined with `--column`.
-
-Duplicate references, overlapping ranges and index/name aliases referring to the same column are rejected. Dropping every column is an error because zero-column records cannot be represented unambiguously in CSV. Range endpoints and indices are checked against the header or first data record before ranges are expanded; headerless empty input has no width to validate. Input headers follow the same column transformation and are emitted only with `-k`.
+**Exact names.** The list trims surrounding whitespace. Escape commas, equals signs and backslashes in names with `\,`, `\=` and `\\`. Prefix names beginning with `#` or `%` with `%`. Use `--column '% unit,price '` for a literal name with significant whitespace. Supply one `--column` per selector in place of the list. Use `--` before a list that starts with `-`, after the flags.
 
 ## Row selection and removal
 
 ```sh
-ceslav rows --first 10 -j -k -i input.csv
-ceslav rows --last 10 -j -k -i input.csv
-ceslav rows --first 10 --drop -j -k -i input.csv
-ceslav rows --last 10 --drop -j -k -i input.csv
-
-# Select data rows 1, 3, 4 and 7, in that order.
-ceslav rows '1,3-4,7' -j -k -i input.csv
-
-# Reorder rows, including a descending inclusive range.
-ceslav rows '7,4-3,1' -j -k -i input.csv
-
-# Emit row 3 four times; emit rows 2, 3 and 4 twice as a block.
-ceslav rows '3*4' -j -k -i input.csv
-ceslav rows '2-4*2' -j -k -i input.csv
-
-# Remove listed rows; reverse the remaining rows.
-ceslav rows '1,3-4,7' --drop --reverse -j -k -i input.csv
-
-# Reverse all data rows, or just the first 10.
-ceslav rows --reverse -j -k -i input.csv
-ceslav rows --first 10 --reverse -j -k -i input.csv
+ceslav rows --first 10 -jk -i input.csv
+ceslav rows --last 10 --drop -jk -i input.csv
+ceslav rows '1,3-4,7' -jk -i input.csv
+ceslav rows '7,4-3,1' -jk -i input.csv
+ceslav rows '2-4*2' -jk -i input.csv
+ceslav rows --reverse -jk -i input.csv
 ```
 
-Choose one selector list, `--first N` or `--last N`. N must be nonnegative and fit the platform's integer range. Selector lists use **one-based data-row numbers** and inclusive ranges, separated by commas. Row numbers must be positive decimal integers fitting a signed 64-bit integer; whitespace around numbers is allowed. Headers are excluded from numbering and counts; `-k` requires `-j` for all transformation commands.
+Choose a list, `--first N`, or `--last N`. The header is excluded from row numbers and counts. Counts are decimal. Keeping zero emits only the requested header. Dropping zero keeps all data. If a requested row is absent, it contributes no output.
 
-Selector order determines output order. Descending ranges such as `4-2` select rows 4, 3 and 2. Repeated or overlapping selectors repeat those rows in the output; `--drop` removes their union and retains the order of remaining rows. Unavailable row numbers are ignored, and ranges are clipped to available input. An empty selector, row 0, a negative number, an open-ended range or malformed syntax is an error.
+Rows come out in selector order. `3*4` emits row 3 four times, and `2-4*2` emits `2,3,4,2,3,4`. Overlapping selectors repeat matching rows. With `--drop`, each matching row is removed once. `--reverse` reverses the result while leaving any header first. On its own it reverses all data rows.
 
-Append `*COUNT` to a row or range selector for repetition. COUNT is a positive signed 64-bit decimal integer giving the total number of copies: `3*4` emits row 3 four times, while `2-4*2` emits `2,3,4,2,3,4`. A count of zero is an error. Repetition combines with other selectors and `--reverse`; with `--drop`, only membership matters, so a multiplier does not change which rows are removed. Unavailable rows are omitted before repetition. Copy counts are stored compactly and rows are retained once, so a large multiplier increases output size without allocating a matching number of buffered rows.
+Forward, disjoint selections stream when their output follows input order. Reordered selections and repeated multirow blocks hold matching rows until selection is complete. A prefix or row list can finish before EOF and skips validation of later records. Keeping the last N rows waits for EOF and holds up to N rows. Dropping the last N rows delays data output by N rows. Reversing all rows holds the full input in memory. Repetition can produce enough output to fill the destination even with a small input.
 
-`--reverse` reverses the result of selection or dropping; without a selector list or first/last option, it reverses all data rows. The header remains first. `--drop` requires an explicit selection. A selector list cannot be combined with `--first` or `--last`.
+## Input and output
 
-Keeping zero records emits no data and does not read data records; with `-j` it still reads the required header and writes it if `-k` is set. Dropping zero preserves all data. If N exceeds the number of records, keeping retains all available records and dropping removes all of them. Keeping a prefix stops after N records, and keeping a selector list stops at its highest requested row, without waiting for input EOF. These early stops also apply with `--reverse`; trailing records are not parsed or validated. Dropping rows and reversing all input read through EOF.
+Input uses comma-separated CSV, including quoted fields and quoted newlines. Records must have consistent field counts. The [implementation goals](docs/implementation-plan.md) track planned date and time operations, filtering, and calculated columns.
 
-Without reversal, prefix operations use constant auxiliary row storage; suffix operations use a ring buffer holding at most the smaller of N and the observed record count, without allocating N slots up front. Keeping a suffix emits data at EOF; dropping a suffix streams the prefix with an N-record delay. Explicit selection buffers only matching observed rows and emits them at completion in selector order, while dropping explicit selectors streams the remainder. Ranges are stored compactly without expanding their declared size. Reversal buffers the resulting data, except that reversing a kept suffix reuses its bounded ring buffer. Reversing all data therefore needs memory proportional to the input size.
+Errors go to standard error with a nonzero exit code. Commands open `-o` when they first emit a record or finish successfully with empty output. Buffered row selections and reversals wait to emit their header until the result is ready. Streaming transforms can leave partial output after a later input or write error.
 
-Input uses comma-separated CSV, including quoted fields and quoted newlines. Records must have consistent field counts. Date/time operations, filtering and calculated columns are planned but not yet implemented.
+Use `-o` to protect the input file from shell truncation. Ceslav rejects the same input and output file, including hard-link and symlink aliases and a regular file connected to stdout. Shell `>` can truncate a file before ceslav starts.
 
-Errors go to standard error with a nonzero exit code. CSV parse and processing errors identify the record; column errors identify the selector. Output files open only when a command first emits output (or completes successfully with empty output). Counting and sorting validate their full input before emitting output. Streaming transforms can emit partial output before encountering a later input error. Identical input/output files, including hard-link and symlink aliases, are rejected. Output write/flush/close errors are reported; output may be partial after an I/O failure. Redirecting stdout with the shell can truncate a destination before ceslav starts, so use `-o` when file identity checks are needed.
-
-Cancellation closes the active input stream, including standard input when selected, to interrupt a blocked read. Standard input stays open on ordinary completion and deliberate early stop.
-
-Use `ceslav --help`, `ceslav sort --help` and `ceslav row-count --help` for options. Set `CESLAV_LOG` to a file path to enable diagnostic logging.
-
-Implementation progress is tracked in [docs/implementation-plan.md](docs/implementation-plan.md).
+Run `ceslav COMMAND --help` for usage and examples. Set `CESLAV_LOG` to a file path to enable diagnostic logging.

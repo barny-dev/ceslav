@@ -17,12 +17,20 @@ func DropCmd() *cobra.Command   { return command(true) }
 
 func command(drop bool) *cobra.Command {
 	name, short := "select", "Select CSV columns in the requested order"
+	example := "  ceslav select 'city,name' -jk -i input.csv\n" +
+		"  ceslav select 'city,name=person' -j -i input.csv\n" +
+		"  ceslav select '#2,#0-1' -i input.csv"
 	if drop {
 		name, short = "drop", "Remove CSV columns, retaining the order of the remainder"
+		example = "  ceslav drop 'debug,temporary' -jk -i input.csv"
+	}
+	long := short + ". Supply one comma-separated list of names, #indices or inclusive ranges. Names require --header. Columns start at #0."
+	if !drop {
+		long += " Use source=output-name to rename a column. A rename requires --header and prints the output header."
 	}
 	cmd := &cobra.Command{
 		Use: name + " [columns] [flags]", Short: short, Args: cobra.MaximumNArgs(1),
-		Long: short + ". Supply one comma-separated list such as name,city or #2,#0-1. Bare names and %name require --header; #indices start at 0 and support inclusive ascending/descending ranges. For select, source=output-name renames one column and requires --header --output-header. Escape commas, equals signs and backslashes in names with a backslash. Alternatively repeat --column with literal #index or %name selectors. Duplicate selectors and zero-column output are errors.",
+		Long: long, Example: example,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return run.RunOneToOneCommand(cmd, func(cmd *cobra.Command, sink processor.Sink) (processor.Processor, error) {
 				return NewProcessor(cmd, sink, drop)
@@ -34,7 +42,7 @@ func command(drop bool) *cobra.Command {
 	flags.AddOutputFileFlag(fs)
 	flags.AddHeaderRowFlag(fs)
 	flags.AddOutputHeaderRowFlag(fs)
-	fs.StringArrayP("column", "c", nil, "column selector (#index or %name); repeat to specify multiple columns")
+	fs.StringArrayP("column", "c", nil, "literal #index or %name selector for exact names; repeat in place of the list")
 	return cmd
 }
 
@@ -66,9 +74,10 @@ func NewProcessor(cmd *cobra.Command, sink processor.Sink, drop bool) (processor
 			if drop {
 				return nil, errors.New("column renaming is supported by select only")
 			}
-			if !proc.expectHeader || !proc.outputHeader {
-				return nil, errors.New("column renaming requires --header and --output-header")
+			if !proc.expectHeader {
+				return nil, errors.New("column renaming requires --header")
 			}
+			proc.outputHeader = true
 		}
 	}
 	if !proc.expectHeader {
@@ -86,6 +95,7 @@ func (proc *Processor) resolve(header []string, width int) ([]selectedColumn, er
 		selector    columnSelector
 	}
 	spans := make([]span, 0, len(proc.selectors))
+	unaliased := make([]span, 0, len(proc.selectors))
 	for _, selector := range proc.selectors {
 		first, err := selector.first.Resolve(header)
 		if err != nil {
@@ -102,24 +112,45 @@ func (proc *Processor) resolve(header []string, width int) ([]selectedColumn, er
 				}
 			}
 		}
-		spans = append(spans, span{first, last, selector})
+		resolved := span{first, last, selector}
+		spans = append(spans, resolved)
+		if selector.alias == "" {
+			unaliased = append(unaliased, resolved)
+		}
 	}
-	// Check overlaps without expanding ranges, even before input width is known.
-	ordered := append([]span(nil), spans...)
-	sort.Slice(ordered, func(i, j int) bool {
-		return min(ordered[i].first, ordered[i].last) < min(ordered[j].first, ordered[j].last)
+	sort.Slice(unaliased, func(i, j int) bool {
+		return min(unaliased[i].first, unaliased[i].last) < min(unaliased[j].first, unaliased[j].last)
 	})
-	for i := 1; i < len(ordered); i++ {
-		current, previous := ordered[i], ordered[i-1]
-		low := min(current.first, current.last)
-		if low <= max(previous.first, previous.last) {
-			return nil, fmt.Errorf("duplicate column #%d in selectors %s and %s", low, previous.selector, current.selector)
+	if !proc.drop {
+		// An alias can reuse a source. Unrenamed copies would have the same
+		// output name, so check their ranges before expanding them.
+		for i := 1; i < len(unaliased); i++ {
+			current, previous := unaliased[i], unaliased[i-1]
+			low := min(current.first, current.last)
+			if low <= max(previous.first, previous.last) {
+				return nil, fmt.Errorf("duplicate column #%d in selectors %s and %s", low, previous.selector, current.selector)
+			}
 		}
 	}
 	if width < 0 {
 		return nil, nil
 	}
 	var selected []selectedColumn
+	if proc.drop {
+		// Emit the gaps between the ranges. Advancing past an already
+		// removed column is a no-op, even when entire ranges overlap.
+		index := 0
+		for _, span := range unaliased {
+			for low := min(span.first, span.last); index < low; index++ {
+				selected = append(selected, selectedColumn{index: index})
+			}
+			index = max(index, max(span.first, span.last)+1)
+		}
+		for ; index < width; index++ {
+			selected = append(selected, selectedColumn{index: index})
+		}
+		return selected, nil
+	}
 	for _, span := range spans {
 		step := 1
 		if span.first > span.last {
@@ -136,22 +167,9 @@ func (proc *Processor) resolve(header []string, width int) ([]selectedColumn, er
 }
 
 func (proc *Processor) prepare(header []string, width int) error {
-	selected, err := proc.resolve(header, width)
+	projection, err := proc.resolve(header, width)
 	if err != nil {
 		return err
-	}
-	projection := selected
-	if proc.drop {
-		removed := make(map[int]bool, len(selected))
-		for _, column := range selected {
-			removed[column.index] = true
-		}
-		projection = make([]selectedColumn, 0)
-		for index := 0; index < width; index++ {
-			if !removed[index] {
-				projection = append(projection, selectedColumn{index: index})
-			}
-		}
 	}
 	if len(projection) == 0 {
 		return errors.New("projection would leave no columns")

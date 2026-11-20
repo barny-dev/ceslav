@@ -141,6 +141,25 @@ func TestRowsConfigurationErrors(t *testing.T) {
 	}
 }
 
+func TestRowCountDecimalAndPlatformLimit(t *testing.T) {
+	tooLarge := strconv.FormatUint(1<<(strconv.IntSize-1), 10)
+	for _, flag := range []string{"--first", "--last"} {
+		proc := newRows(t, []string{flag, "010"}, func([]string) error { return nil })
+		if proc.n != 10 {
+			t.Fatalf("%s 010: got %d rows, want 10", flag, proc.n)
+		}
+		for _, value := range []string{"0x10", "1_0", tooLarge} {
+			cmd := Cmd()
+			if err := cmd.ParseFlags([]string{flag, value}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NewProcessor(cmd, nil); err == nil {
+				t.Errorf("%s accepted %q", flag, value)
+			}
+		}
+	}
+}
+
 func TestRowSelectorsAndReverse(t *testing.T) {
 	records := [][]string{{"1"}, {"2"}, {"3"}, {"4"}, {"5"}, {"6"}, {"7"}}
 	for _, tc := range []struct {
@@ -189,7 +208,7 @@ func TestRowSelectorsAndReverse(t *testing.T) {
 
 func TestRepeatedRowsAreBufferedOnceAndKeepOneHeader(t *testing.T) {
 	var got []string
-	proc := newRows(t, []string{"2*4", "-j", "-k"}, func(row []string) error { got = append(got, row[0]); return nil })
+	proc := newRows(t, []string{"2*4", "--reverse", "-j", "-k"}, func(row []string) error { got = append(got, row[0]); return nil })
 	if _, err := proc.ProcessHeader([]string{"header"}); err != nil {
 		t.Fatal(err)
 	}
@@ -210,6 +229,23 @@ func TestRepeatedRowsAreBufferedOnceAndKeepOneHeader(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "header,two,two,two,two" {
 		t.Fatalf("got %v", got)
+	}
+}
+
+func TestOrderedSelectorsStreamWithoutBufferingRows(t *testing.T) {
+	var got []string
+	proc := newRows(t, []string{"1-2,4*2,6"}, func(row []string) error {
+		got = append(got, row[0])
+		return nil
+	})
+	for i, want := range []string{"1", "1,2", "1,2", "1,2,4,4", "1,2,4,4", "1,2,4,4,6"} {
+		stop, err := proc.ProcessRow([]string{strconv.Itoa(i + 1)})
+		if err != nil || stop != (i == 5) || strings.Join(got, ",") != want || len(proc.selectedRows) != 0 {
+			t.Fatalf("row %d: output %v, stop %v, error %v, buffered %d rows", i+1, got, stop, err, len(proc.selectedRows))
+		}
+	}
+	if err := proc.Complete(); err != nil || len(got) != 5 {
+		t.Fatalf("completion changed streamed output: %v, %v", got, err)
 	}
 }
 

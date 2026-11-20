@@ -2,6 +2,8 @@ package rows
 
 import (
 	"errors"
+	"fmt"
+	"strconv"
 
 	"github.com/barny-dev/ceslav/internal/flags"
 	"github.com/barny-dev/ceslav/internal/utilities/processor"
@@ -12,7 +14,11 @@ import (
 func Cmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "rows [selectors] [flags]", Short: "Select, drop, reorder or reverse CSV data records", Args: cobra.MaximumNArgs(1),
-		Long: "Choose row selectors (for example 1,3-4,7), --first N or --last N. Row numbers start at 1 and exclude the header. Ranges are inclusive and may descend. Append *COUNT to repeat a row or entire range, for example 3*4 or 2-4*2; COUNT is a positive integer giving the total number of copies. Add --drop to remove matching rows, or --reverse to reverse the result. Use --reverse alone to reverse all data records.",
+		Long: "Choose a comma-separated row list, --first N or --last N. Row numbers start at 1 and exclude the header. Ranges include both endpoints and may descend. Append *COUNT to repeat a row or range as a block. Use --reverse alone to reverse all data rows.",
+		Example: "  ceslav rows '1,3-4,7' -jk -i input.csv\n" +
+			"  ceslav rows '2-4*2' -jk -i input.csv\n" +
+			"  ceslav rows --last 10 --drop -jk -i input.csv\n" +
+			"  ceslav rows --reverse -jk -i input.csv",
 		RunE: func(cmd *cobra.Command, _ []string) error { return run.RunOneToOneCommand(cmd, NewProcessor) },
 	}
 	fs := cmd.Flags()
@@ -20,8 +26,8 @@ func Cmd() *cobra.Command {
 	flags.AddOutputFileFlag(fs)
 	flags.AddHeaderRowFlag(fs)
 	flags.AddOutputHeaderRowFlag(fs)
-	fs.Int("first", 0, "number of data records from the start")
-	fs.Int("last", 0, "number of data records from the end")
+	fs.String("first", "", "select `N` data rows from the start (nonnegative decimal)")
+	fs.String("last", "", "select `N` data rows from the end (nonnegative decimal)")
 	fs.Bool("drop", false, "remove the chosen records instead of retaining them")
 	fs.Bool("reverse", false, "reverse the resulting data records, keeping the header first")
 	return cmd
@@ -31,9 +37,12 @@ type Processor struct {
 	n, remaining                           int
 	fromEnd, drop, reverse                 bool
 	expectHeader, outputHeader, headerRead bool
+	pendingHeader                          []string
 	buffer, reversed                       [][]string
 	next                                   int
 	selection                              *rowSelection
+	streamSelection                        bool
+	nextSelector                           int
 	rowNumber                              int64
 	selectedRows                           map[int64][]string
 	sink                                   processor.Sink
@@ -70,6 +79,7 @@ func NewProcessor(cmd *cobra.Command, sink processor.Sink) (processor.Processor,
 		if err != nil {
 			return nil, err
 		}
+		proc.streamSelection = !drop && !reverse && proc.selection.inInputOrder()
 	} else if modes == 0 {
 		// Reversing all rows is equivalent to reversing a drop-first-zero pass.
 		proc.drop = true
@@ -79,13 +89,15 @@ func NewProcessor(cmd *cobra.Command, sink processor.Sink) (processor.Processor,
 		if proc.fromEnd {
 			flag = "last"
 		}
-		proc.n, err = fs.GetInt(flag)
+		value, err := fs.GetString(flag)
 		if err != nil {
 			return nil, err
 		}
-		if proc.n < 0 {
-			return nil, errors.New("row count must be nonnegative")
+		count, err := strconv.ParseUint(value, 10, strconv.IntSize-1)
+		if err != nil {
+			return nil, fmt.Errorf("--%s row count %q must be a nonnegative decimal integer fitting in int", flag, value)
 		}
+		proc.n = int(count)
 		proc.remaining = proc.n
 	}
 	return proc, nil
@@ -118,7 +130,10 @@ func (proc *Processor) ProcessHeader(header []string) (processor.Terminate, erro
 	}
 	proc.headerRead = true
 	if proc.outputHeader {
-		if err := proc.sink(header); err != nil {
+		// Delay output if the data cannot be emitted until completion.
+		if proc.reverse || !proc.drop && (proc.fromEnd || proc.selection != nil && !proc.streamSelection) {
+			proc.pendingHeader = append([]string(nil), header...)
+		} else if err := proc.sink(header); err != nil {
 			return true, err
 		}
 	}
@@ -131,6 +146,21 @@ func (proc *Processor) ProcessRow(record []string) (processor.Terminate, error) 
 	}
 	if proc.keepZero() {
 		return true, nil
+	}
+	if proc.streamSelection {
+		proc.rowNumber++
+		selector := proc.selection.ranges[proc.nextSelector]
+		if proc.rowNumber >= selector.first {
+			for copy := int64(0); copy < selector.copies; copy++ {
+				if err := proc.sink(record); err != nil {
+					return true, err
+				}
+			}
+			if proc.rowNumber == selector.last {
+				proc.nextSelector++
+			}
+		}
+		return proc.nextSelector == len(proc.selection.ranges), nil
 	}
 	if proc.selection != nil {
 		if proc.drop && proc.rowNumber >= proc.selection.last {
@@ -193,11 +223,17 @@ func (proc *Processor) ProcessRow(record []string) (processor.Terminate, error) 
 func (proc *Processor) Complete() error {
 	defer func() {
 		proc.buffer, proc.reversed, proc.selectedRows = nil, nil, nil
+		proc.pendingHeader = nil
 	}()
 	if proc.expectHeader && !proc.headerRead {
 		return errors.New("header expected")
 	}
-	if proc.selection != nil && !proc.drop {
+	if proc.pendingHeader != nil {
+		if err := proc.sink(proc.pendingHeader); err != nil {
+			return err
+		}
+	}
+	if proc.selection != nil && !proc.drop && !proc.streamSelection {
 		return proc.selection.forEach(proc.rowNumber, proc.reverse, func(index int64) error {
 			return proc.sink(proc.selectedRows[index])
 		})

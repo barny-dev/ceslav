@@ -38,8 +38,7 @@ func TestRenamingConfigurationErrors(t *testing.T) {
 		args []string
 		want string
 	}{
-		{false, []string{"#0=ID"}, "requires --header and --output-header"},
-		{false, []string{"-j", "name=Person"}, "requires --header and --output-header"},
+		{false, []string{"#0=ID"}, "requires --header"},
 		{true, []string{"-j", "-k", "name=Person"}, "select only"},
 	} {
 		cmd := SelectCmd()

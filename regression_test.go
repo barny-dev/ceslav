@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -101,6 +103,9 @@ func TestOutputNotTruncatedOnInvalidInput(t *testing.T) {
 		{"rename collision", []string{"select", "name=city,city", "-j", "-k"}, "name,city\nA,Gdansk\n"},
 		{"empty alias", []string{"select", "name=", "-j", "-k"}, "name\nA\n"},
 		{"invalid repeat count", []string{"rows", "1*0"}, "a\n"},
+		{"bad CSV during reversal", []string{"rows", "--reverse", "-jk"}, "id,city\n1,Gdansk\n2\n"},
+		{"bad CSV during suffix selection", []string{"rows", "--last", "2", "-jk"}, "id,city\n1,Gdansk\n2\n"},
+		{"bad CSV during reordered selection", []string{"rows", "3,1", "-jk"}, "id,city\n1,Gdansk\n2\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,6 +125,26 @@ func TestOutputNotTruncatedOnInvalidInput(t *testing.T) {
 				t.Fatalf("destination modified: %q", data)
 			}
 		})
+	}
+}
+
+func TestRegularStdoutMatchingInputIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input.csv")
+	if err := os.WriteFile(path, []byte("name,value\nA,1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdout.Close()
+	// This command emits no rows. A read-only descriptor is enough to
+	// exercise the output identity check without writing to the input.
+	cmd := exec.Command(testBinary, "rows", "--first", "0", "-i", path)
+	var stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = stdout, &stderr
+	if err := cmd.Run(); err == nil || !strings.Contains(stderr.String(), "same file") {
+		t.Fatalf("wanted same-file error, got %v, stderr %q", err, stderr.String())
 	}
 }
 

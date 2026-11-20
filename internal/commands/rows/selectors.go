@@ -108,6 +108,18 @@ func (selection *rowSelection) contains(index int64) bool {
 	return i < len(selection.intervals) && selection.intervals[i].first <= index
 }
 
+func (selection *rowSelection) inInputOrder() bool {
+	var previousEnd int64
+	for _, selector := range selection.ranges {
+		if selector.first <= previousEnd || selector.first > selector.last ||
+			selector.copies > 1 && selector.first != selector.last {
+			return false
+		}
+		previousEnd = selector.last
+	}
+	return true
+}
+
 // Clip each range to observed input before iterating, so absent rows never
 // consume memory or time proportional to a requested range's upper bound.
 func (selection *rowSelection) forEach(total int64, reverse bool, visit func(int64) error) error {

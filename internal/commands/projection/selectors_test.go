@@ -46,7 +46,7 @@ func TestHugeColumnRangeIsValidatedBeforeExpansion(t *testing.T) {
 	}
 }
 
-func TestHugeOverlappingRangesAreRejectedBeforeInput(t *testing.T) {
+func TestHugeOverlappingRangesStayCompactBeforeInput(t *testing.T) {
 	limit := strconv.Itoa(int(^uint(0) >> 1))
 	for _, drop := range []bool{false, true} {
 		command := SelectCmd()
@@ -56,8 +56,13 @@ func TestHugeOverlappingRangesAreRejectedBeforeInput(t *testing.T) {
 		if err := command.ParseFlags([]string{"#0-" + limit + ",#" + limit + "-1"}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := NewProcessor(command, func([]string) error { t.Fatal("emitted invalid configuration"); return nil }, drop); err == nil || !strings.Contains(err.Error(), "duplicate column") {
-			t.Fatalf("accepted overlapping ranges: %v", err)
+		_, err := NewProcessor(command, func([]string) error { t.Fatal("emitted before input"); return nil }, drop)
+		if drop {
+			if err != nil {
+				t.Fatalf("drop rejected overlapping ranges: %v", err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), "duplicate column") {
+			t.Fatalf("select accepted unrenamed overlapping ranges: %v", err)
 		}
 	}
 }

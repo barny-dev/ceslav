@@ -33,6 +33,8 @@ func TestProjection(t *testing.T) {
 		rows, want   [][]string
 	}{
 		{"rename names", false, []string{"-j", "-k", "city=location,name=person"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"location", "person"}, {"Gdansk", "A"}}},
+		{"rename copies of one source", false, []string{"-j", "name=one,#0=two"}, []string{"name", "age"}, [][]string{{"A", "30"}}, [][]string{{"one", "two"}, {"A", "A"}}},
+		{"rename a copy of a column in a range", false, []string{"-j", "#0-1,name=person"}, []string{"name", "age"}, [][]string{{"A", "30"}}, [][]string{{"name", "age", "person"}, {"A", "30", "A"}}},
 		{"rename index with range", false, []string{"-j", "-k", "#2=location,#0-1"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"location", "name", "age"}, {"Gdansk", "A", "30"}}},
 		{"swap names", false, []string{"-j", "-k", "name=age,age=name"}, []string{"name", "age"}, [][]string{{"A", "30"}}, [][]string{{"age", "name"}, {"A", "30"}}},
 		{"unselected name is available", false, []string{"-j", "-k", "name=city"}, []string{"name", "city"}, [][]string{{"A", "Gdansk"}}, [][]string{{"city"}, {"A"}}},
@@ -49,6 +51,7 @@ func TestProjection(t *testing.T) {
 		{"descending range", false, []string{"-j", "-k", "#2-0"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"city", "age", "name"}, {"Gdansk", "30", "A"}}},
 		{"drop compact names", true, []string{"-j", "-k", "city,age"}, []string{"name", "age", "city"}, [][]string{{"A", "30", "Gdansk"}}, [][]string{{"name"}, {"A"}}},
 		{"drop descending range", true, []string{"#2-1"}, nil, [][]string{{"a", "b", "c", "d"}}, [][]string{{"a", "d"}}},
+		{"drop overlapping ranges", true, []string{"#6-4,#1-3,#3-1,#5-2"}, nil, [][]string{{"a", "b", "c", "d", "e", "f", "g", "h"}}, [][]string{{"a", "h"}}},
 		{"compact whitespace", false, []string{" #2 , #0 - #1 "}, nil, [][]string{{"a", "b", "c"}}, [][]string{{"c", "a", "b"}}},
 		{"numeric header is a name", false, []string{"-j", "-k", "0"}, []string{"name", "0"}, [][]string{{"A", "number"}}, [][]string{{"0"}, {"number"}}},
 		{"hyphen and unicode names", false, []string{"-j", "-k", "żółć,first-name"}, []string{"first-name", "żółć"}, [][]string{{"A", "B"}}, [][]string{{"żółć", "first-name"}, {"B", "A"}}},
@@ -109,17 +112,15 @@ func TestProjectionValidatesBeforeEmitting(t *testing.T) {
 	}{
 		{"rename target collision", false, []string{"-j", "-k", "name=city,city"}, []string{"name", "city"}, "collides"},
 		{"two aliases collide", false, []string{"-j", "-k", "name=id,age=id"}, []string{"name", "age"}, "collides"},
-		{"renaming does not duplicate sources", false, []string{"-j", "-k", "name=one,#0=two"}, []string{"name", "age"}, "duplicate column"},
+		{"aliases on one source must differ", false, []string{"-j", "name=id,#0=id"}, []string{"name", "age"}, "collides"},
 		{"compact unknown name", false, []string{"-j", "-k", "missing,#0"}, []string{"name"}, "not found"},
 		{"compact ambiguous name", false, []string{"-j", "-k", "name"}, []string{"name", "name"}, "ambiguous"},
 		{"compact alias overlap", false, []string{"-j", "-k", "name,#1-0"}, []string{"name", "age"}, "duplicate column"},
-		{"compact drop alias overlap", true, []string{"-j", "-k", "name,#1-0"}, []string{"name", "age", "city"}, "duplicate column"},
 		{"compact out of range", false, []string{"-j", "-k", "#0-2"}, []string{"name", "age"}, "out of range"},
 		{"compact drop all", true, []string{"-j", "-k", "#1-0"}, []string{"name", "age"}, "no columns"},
 		{"unknown name", false, []string{"-j", "-k", "-c", "%missing"}, []string{"name"}, "not found"},
 		{"ambiguous name", false, []string{"-j", "-k", "-c", "%name"}, []string{"name", "name"}, "ambiguous"},
 		{"alias duplicate", false, []string{"-j", "-k", "-c", "%name", "-c", "#0"}, []string{"name", "age"}, "duplicate column"},
-		{"drop alias duplicate", true, []string{"-j", "-k", "-c", "%name", "-c", "#0"}, []string{"name", "age"}, "duplicate column"},
 		{"header index", false, []string{"-j", "-k", "-c", "#2"}, []string{"name"}, "out of range"},
 		{"drop all", true, []string{"-j", "-k", "-c", "#0"}, []string{"name"}, "no columns"},
 	}

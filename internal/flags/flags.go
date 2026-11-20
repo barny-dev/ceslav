@@ -84,6 +84,15 @@ func GetInput(cmd *cobra.Command) (*os.File, error) {
 func GetOutput(cmd *cobra.Command, input *os.File) (*os.File, error) {
 	fileName := GetOutputFileFlag(cmd.Flags())
 	if fileName == "-" {
+		info, err := os.Stdout.Stat()
+		if err != nil {
+			return nil, fmt.Errorf("stat stdout: %w", err)
+		}
+		if info.Mode().IsRegular() {
+			if err := checkOutputIdentity(input, info); err != nil {
+				return nil, err
+			}
+		}
 		return os.Stdout, nil
 	}
 	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, 0666)
@@ -93,16 +102,12 @@ func GetOutput(cmd *cobra.Command, input *os.File) (*os.File, error) {
 	fail := func(err error) (*os.File, error) {
 		return nil, errors.Join(err, file.Close())
 	}
-	inputInfo, err := input.Stat()
-	if err != nil {
-		return fail(fmt.Errorf("stat input: %w", err))
-	}
 	outputInfo, err := file.Stat()
 	if err != nil {
 		return fail(fmt.Errorf("stat output: %w", err))
 	}
-	if os.SameFile(inputInfo, outputInfo) {
-		return fail(errors.New("input and output refer to the same file"))
+	if err := checkOutputIdentity(input, outputInfo); err != nil {
+		return fail(err)
 	}
 	// Pipes and devices do not support Truncate; opening them already positions
 	// the stream correctly. Only regular files need their previous data removed.
@@ -112,4 +117,15 @@ func GetOutput(cmd *cobra.Command, input *os.File) (*os.File, error) {
 		}
 	}
 	return file, nil
+}
+
+func checkOutputIdentity(input *os.File, outputInfo os.FileInfo) error {
+	inputInfo, err := input.Stat()
+	if err != nil {
+		return fmt.Errorf("stat input: %w", err)
+	}
+	if os.SameFile(inputInfo, outputInfo) {
+		return errors.New("input and output refer to the same file")
+	}
+	return nil
 }
